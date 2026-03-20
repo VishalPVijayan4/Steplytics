@@ -38,18 +38,17 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    kotlinOptions {
-        jvmTarget = "11"
-    }
-
     buildFeatures {
         compose = true
     }
 }
 
-//kotlin {
-//    jvmToolchain(11)
-//}
+kotlin {
+    compilerOptions {
+        languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_0)
+    }
+}
+
 
 dependencies {
     implementation(libs.androidx.core.ktx)
