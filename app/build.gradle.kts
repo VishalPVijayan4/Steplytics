@@ -6,11 +6,12 @@ plugins {
 
 android {
     namespace = "com.buildndeploy.steplytics"
-    compileSdk {
+    compileSdk = 35
+    /*compileSdk {
         version = release(36) {
             minorApiLevel = 1
         }
-    }
+    }*/
 
     defaultConfig {
         applicationId = "com.buildndeploy.steplytics"
@@ -37,14 +38,18 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+
     buildFeatures {
         compose = true
     }
 }
 
-kotlin {
-    jvmToolchain(11)
-}
+//kotlin {
+//    jvmToolchain(11)
+//}
 
 dependencies {
     implementation(libs.androidx.core.ktx)
