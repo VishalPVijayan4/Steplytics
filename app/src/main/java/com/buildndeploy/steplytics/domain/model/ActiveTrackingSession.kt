@@ -13,7 +13,13 @@ data class ActiveTrackingSession(
     val caloriesKcal: Float = 0f,
     val pacePerKm: Float = 0f,
     val currentAqi: Int? = null,
+    val currentPollen: Int? = null,
     val currentLocation: RoutePoint? = null,
     val gpsEnabledMessage: String = "GPS enabled",
-    val isStationary: Boolean = false
+    val isStationary: Boolean = false,
+    val movingTimeSeconds: Long = 0,
+    val stationaryTimeSeconds: Long = 0,
+    val currentSpeedMps: Float = 0f,
+    val averageSpeedMps: Float = 0f,
+    val maxSpeedMps: Float = 0f
 )
