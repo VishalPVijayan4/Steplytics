@@ -82,6 +82,8 @@ class WorkoutTrackingService : Service() {
         lastEnvironmentRefreshAt = 0L
         startForeground(NOTIFICATION_ID, buildNotification(session))
         activeSession = session
+        lastLocationSample = null
+        lastEnvironmentRefreshAt = 0L
         TrackingSessionStore.update(session)
         startTimer()
         startLocationUpdates()
