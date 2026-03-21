@@ -37,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +63,8 @@ import com.buildndeploy.steplytics.ui.theme.CardBorder
 import com.buildndeploy.steplytics.ui.theme.PrimaryBlue
 import com.buildndeploy.steplytics.ui.theme.PrimaryGreen
 import com.buildndeploy.steplytics.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
+import java.util.Locale
 
 private enum class DashboardTab(
     val label: String,
@@ -79,6 +82,37 @@ private data class StatCardUi(
     val subtitle: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val background: Color
+)
+
+private data class ActivityTypeUi(
+    val id: String,
+    val title: String,
+    val description: String,
+    val badge: String,
+    val gradient: List<Color>,
+    val speedFactor: Float,
+    val caloriesPerMinute: Float
+)
+
+private sealed interface HomeFlowState {
+    data object Overview : HomeFlowState
+    data class ChooseActivity(val selectedId: String? = null) : HomeFlowState
+    data class Tracking(
+        val activity: ActivityTypeUi,
+        val elapsedSeconds: Int = 0,
+        val isPaused: Boolean = false
+    ) : HomeFlowState
+    data class Complete(
+        val activity: ActivityTypeUi,
+        val elapsedSeconds: Int,
+        val showShareHint: Boolean = false
+    ) : HomeFlowState
+}
+
+private data class TrackingMetrics(
+    val distanceKm: String,
+    val avgPacePerKm: String,
+    val caloriesKcal: String
 )
 
 private object CalendarUiState {
@@ -99,21 +133,68 @@ private object CalendarUiState {
     }
 }
 
+private val activityTypes = listOf(
+    ActivityTypeUi(
+        id = "walking",
+        title = "Walking",
+        description = "Light exercise, perfect for recovery",
+        badge = "W",
+        gradient = listOf(Color(0xFF3B82F6), Color(0xFF06B6D4)),
+        speedFactor = 0.78f,
+        caloriesPerMinute = 4.8f
+    ),
+    ActivityTypeUi(
+        id = "running",
+        title = "Running",
+        description = "High intensity cardio workout",
+        badge = "R",
+        gradient = listOf(Color(0xFFA855F7), Color(0xFFEC4899)),
+        speedFactor = 1.35f,
+        caloriesPerMinute = 8.6f
+    ),
+    ActivityTypeUi(
+        id = "jogging",
+        title = "Jogging",
+        description = "Moderate pace for endurance",
+        badge = "J",
+        gradient = listOf(Color(0xFF22C55E), Color(0xFF10B981)),
+        speedFactor = 1.02f,
+        caloriesPerMinute = 6.2f
+    )
+)
+
 @Composable
 fun HomeScreen(
     profile: UserProfile?,
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
+    var homeFlow by remember { mutableStateOf<HomeFlowState>(HomeFlowState.Overview) }
+    val isFocusedWorkoutFlow = selectedTab == DashboardTab.Home && homeFlow != HomeFlowState.Overview
+
+    val trackingState = homeFlow as? HomeFlowState.Tracking
+    LaunchedEffect(trackingState?.activity?.id, trackingState?.elapsedSeconds, trackingState?.isPaused) {
+        if (trackingState != null && !trackingState.isPaused) {
+            delay(1_000)
+            homeFlow = trackingState.copy(elapsedSeconds = trackingState.elapsedSeconds + 1)
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = AppBackground,
         bottomBar = {
-            BottomNavigationBar(
-                selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it }
-            )
+            if (!isFocusedWorkoutFlow) {
+                BottomNavigationBar(
+                    selectedTab = selectedTab,
+                    onTabSelected = {
+                        selectedTab = it
+                        if (it != DashboardTab.Home) {
+                            homeFlow = HomeFlowState.Overview
+                        }
+                    }
+                )
+            }
         }
     ) { innerPadding ->
         Box(
@@ -122,18 +203,76 @@ fun HomeScreen(
                 .background(AppBackground)
                 .padding(innerPadding)
         ) {
-            when (selectedTab) {
-                DashboardTab.Home -> DashboardOverviewScreen(profile = profile)
-                DashboardTab.Calendar -> CalendarScreen()
-                DashboardTab.Reports -> ReportsScreen()
-                DashboardTab.Profile -> ProfileScreen(profile = profile)
+            when {
+                selectedTab == DashboardTab.Home && homeFlow is HomeFlowState.ChooseActivity -> {
+                    ChooseActivityScreen(
+                        selectedId = (homeFlow as HomeFlowState.ChooseActivity).selectedId,
+                        activities = activityTypes,
+                        onBack = { homeFlow = HomeFlowState.Overview },
+                        onActivitySelected = { activity ->
+                            homeFlow = HomeFlowState.ChooseActivity(selectedId = activity.id)
+                        },
+                        onStartTracking = {
+                            val selected = activityTypes.firstOrNull { it.id == (homeFlow as HomeFlowState.ChooseActivity).selectedId }
+                            if (selected != null) {
+                                homeFlow = HomeFlowState.Tracking(activity = selected)
+                            }
+                        }
+                    )
+                }
+
+                selectedTab == DashboardTab.Home && homeFlow is HomeFlowState.Tracking -> {
+                    val session = homeFlow as HomeFlowState.Tracking
+                    TrackingScreen(
+                        activity = session.activity,
+                        elapsedSeconds = session.elapsedSeconds,
+                        isPaused = session.isPaused,
+                        metrics = calculateTrackingMetrics(session.activity, session.elapsedSeconds),
+                        onPauseResume = {
+                            homeFlow = session.copy(isPaused = !session.isPaused)
+                        },
+                        onStop = {
+                            homeFlow = HomeFlowState.Complete(
+                                activity = session.activity,
+                                elapsedSeconds = session.elapsedSeconds
+                            )
+                        }
+                    )
+                }
+
+                selectedTab == DashboardTab.Home && homeFlow is HomeFlowState.Complete -> {
+                    val summary = homeFlow as HomeFlowState.Complete
+                    WorkoutCompleteScreen(
+                        activity = summary.activity,
+                        elapsedSeconds = summary.elapsedSeconds,
+                        metrics = calculateTrackingMetrics(summary.activity, summary.elapsedSeconds),
+                        showShareHint = summary.showShareHint,
+                        onSave = { homeFlow = HomeFlowState.Overview },
+                        onShare = { homeFlow = summary.copy(showShareHint = !summary.showShareHint) }
+                    )
+                }
+
+                else -> {
+                    when (selectedTab) {
+                        DashboardTab.Home -> DashboardOverviewScreen(
+                            profile = profile,
+                            onStartActivity = { homeFlow = HomeFlowState.ChooseActivity() }
+                        )
+                        DashboardTab.Calendar -> CalendarScreen()
+                        DashboardTab.Reports -> ReportsScreen()
+                        DashboardTab.Profile -> ProfileScreen(profile = profile)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DashboardOverviewScreen(profile: UserProfile?) {
+private fun DashboardOverviewScreen(
+    profile: UserProfile?,
+    onStartActivity: () -> Unit
+) {
     val headerName = profile?.let { "Welcome back, ${it.age} yrs!" } ?: "Welcome Back!"
     val cards = listOf(
         StatCardUi("Steps", "0", "steps", Icons.Outlined.Straighten, Color(0xFF172446)),
@@ -160,7 +299,7 @@ private fun DashboardOverviewScreen(profile: UserProfile?) {
             color = TextSecondary
         )
 
-        StartActivityButton()
+        StartActivityButton(onClick = onStartActivity)
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             cards.forEach { card ->
@@ -182,6 +321,388 @@ private fun DashboardOverviewScreen(profile: UserProfile?) {
         }
 
         Spacer(modifier = Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun ChooseActivityScreen(
+    selectedId: String?,
+    activities: List<ActivityTypeUi>,
+    onBack: () -> Unit,
+    onActivitySelected: (ActivityTypeUi) -> Unit,
+    onStartTracking: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF1A2137))))
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        BackHeader(onBack = onBack)
+        Text(
+            text = "Choose Activity",
+            color = Color.White,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "Select the type of workout you want to track",
+            color = TextSecondary,
+            style = MaterialTheme.typography.bodyLarge
+        )
+
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            activities.forEach { activity ->
+                ActivityOptionCard(
+                    activity = activity,
+                    selected = activity.id == selectedId,
+                    onClick = { onActivitySelected(activity) }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        GradientButton(
+            label = "Start Tracking",
+            enabled = selectedId != null,
+            onClick = onStartTracking
+        )
+    }
+}
+
+@Composable
+private fun TrackingScreen(
+    activity: ActivityTypeUi,
+    elapsedSeconds: Int,
+    isPaused: Boolean,
+    metrics: TrackingMetrics,
+    onPauseResume: () -> Unit,
+    onStop: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF1B2238))))
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(if (isPaused) PrimaryBlue else PrimaryGreen, CircleShape)
+                )
+                Text(
+                    text = if (isPaused) "Tracking Paused" else "Tracking Active",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            Text(
+                text = activity.title,
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+
+        MapPlaceholderCard(
+            title = "Live Route Preview",
+            subtitle = "Integrate Google Maps here to show the runner path in real time."
+        )
+
+        SurfaceCard {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    text = formatElapsedTime(elapsedSeconds),
+                    color = Color.White,
+                    style = MaterialTheme.typography.displayLarge,
+                    fontWeight = FontWeight.Light
+                )
+                Text(
+                    text = "Duration",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    TrackingMetricColumn(value = metrics.distanceKm, label = "Distance", unit = "km")
+                    TrackingMetricColumn(value = metrics.avgPacePerKm, label = "Pace", unit = "/km")
+                    TrackingMetricColumn(value = metrics.caloriesKcal, label = "Calories", unit = "kcal")
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            SecondaryActionButton(
+                label = if (isPaused) "Resume" else "Pause",
+                background = Color(0xFF111A31),
+                contentColor = if (isPaused) PrimaryGreen else Color.White,
+                modifier = Modifier.weight(1f),
+                onClick = onPauseResume
+            )
+            SecondaryActionButton(
+                label = "Stop",
+                background = Color(0xFFFF1B2D),
+                contentColor = Color.White,
+                modifier = Modifier.weight(1f),
+                onClick = onStop
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorkoutCompleteScreen(
+    activity: ActivityTypeUi,
+    elapsedSeconds: Int,
+    metrics: TrackingMetrics,
+    showShareHint: Boolean,
+    onSave: () -> Unit,
+    onShare: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF202741))))
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(74.dp)
+                .background(PrimaryGreen, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "✓",
+                color = Color.White,
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Workout Complete!",
+                color = Color.White,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Great job on your ${activity.title.lowercase(Locale.getDefault())}",
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+
+        SurfaceCard {
+            StatsGrid(
+                items = listOf(
+                    metrics.distanceKm to "Distance\nkm",
+                    formatElapsedTime(elapsedSeconds) to "Duration\nmin",
+                    metrics.avgPacePerKm to "Avg Pace\n/km",
+                    metrics.caloriesKcal to "Calories\nkcal"
+                ),
+                useFullWidth = true
+            )
+        }
+
+        MapPlaceholderCard(
+            title = "Route Map",
+            subtitle = "Drop a GoogleMap composable into this card to show the saved route summary."
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            GradientButton(
+                label = "Save",
+                modifier = Modifier.weight(1f),
+                onClick = onSave
+            )
+            SecondaryActionButton(
+                label = if (showShareHint) "Shared" else "Share",
+                background = CardBackground,
+                contentColor = Color.White,
+                modifier = Modifier.weight(1f),
+                onClick = onShare
+            )
+        }
+
+        if (showShareHint) {
+            Text(
+                text = "Share tapped. Next step: wire this button to Android Sharesheet with a screenshot or route summary.",
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActivityOptionCard(
+    activity: ActivityTypeUi,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = if (selected) Color(0xFF2B2140) else CardBackground,
+                shape = RoundedCornerShape(24.dp)
+            )
+            .border(
+                width = 1.dp,
+                color = if (selected) PrimaryBlue else CardBorder,
+                shape = RoundedCornerShape(24.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 22.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .background(Brush.horizontalGradient(activity.gradient), RoundedCornerShape(16.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = activity.badge,
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = activity.title,
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = activity.description,
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .background(PrimaryBlue, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(Color.White, CircleShape)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackHeader(onBack: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clickable(onClick = onBack)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(text = "←", color = Color.White, fontSize = 20.sp)
+        Text(text = "Back", color = TextSecondary, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+private fun MapPlaceholderCard(
+    title: String,
+    subtitle: String
+) {
+    SurfaceCard {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp)
+                .background(Color(0xFF0D1326), RoundedCornerShape(20.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(20.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF161F39), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .align(Alignment.Start)
+                ) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Text(
+                    text = "◎",
+                    color = PrimaryBlue.copy(alpha = 0.45f),
+                    fontSize = 72.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = subtitle,
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackingMetricColumn(
+    value: String,
+    label: String,
+    unit: String
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Text(
+            text = value,
+            color = PrimaryBlue,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Text(text = label, color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+        Text(text = unit, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -515,7 +1036,7 @@ private fun ProfileScreen(profile: UserProfile?) {
 }
 
 @Composable
-private fun StartActivityButton() {
+private fun StartActivityButton(onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -523,6 +1044,7 @@ private fun StartActivityButton() {
                 brush = Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen)),
                 shape = RoundedCornerShape(24.dp)
             )
+            .clickable(onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
@@ -544,6 +1066,62 @@ private fun StartActivityButton() {
         Text(
             text = "Start Activity",
             color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun GradientButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                brush = if (enabled) {
+                    Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen))
+                } else {
+                    Brush.horizontalGradient(listOf(Color(0xFF1B243D), Color(0xFF1B243D)))
+                },
+                shape = RoundedCornerShape(18.dp)
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 18.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = if (enabled) Color.White else TextSecondary,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun SecondaryActionButton(
+    label: String,
+    background: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .background(background, RoundedCornerShape(18.dp))
+            .border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 18.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = contentColor,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
@@ -762,6 +1340,7 @@ private fun StatsGrid(
         items.chunked(2).forEach { rowItems ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 rowItems.forEach { (value, label) ->
+                    val parts = label.split("\n")
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -777,10 +1356,17 @@ private fun StatsGrid(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = label,
+                            text = parts.firstOrNull().orEmpty(),
                             color = TextSecondary,
                             style = MaterialTheme.typography.bodyLarge
                         )
+                        if (parts.size > 1) {
+                            Text(
+                                text = parts.drop(1).joinToString(" "),
+                                color = TextSecondary,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
                 if (rowItems.size == 1) Spacer(modifier = Modifier.weight(1f))
@@ -934,4 +1520,33 @@ private fun PreferenceList(
             }
         }
     }
+}
+
+private fun calculateTrackingMetrics(
+    activity: ActivityTypeUi,
+    elapsedSeconds: Int
+): TrackingMetrics {
+    val minutes = elapsedSeconds / 60f
+    val distance = (minutes / 12f) * activity.speedFactor
+    val calories = minutes * activity.caloriesPerMinute
+    val pace = if (distance > 0f) minutes / distance else 0f
+
+    return TrackingMetrics(
+        distanceKm = String.format(Locale.US, "%.2f", distance.coerceAtLeast(0f)),
+        avgPacePerKm = if (pace > 0f) formatMinutesToPace(pace) else "0:00",
+        caloriesKcal = String.format(Locale.US, "%d", calories.toInt())
+    )
+}
+
+private fun formatElapsedTime(totalSeconds: Int): String {
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.US, "%02d:%02d", minutes, seconds)
+}
+
+private fun formatMinutesToPace(totalMinutes: Float): String {
+    val totalSeconds = (totalMinutes * 60).toInt()
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.US, "%d:%02d", minutes, seconds)
 }
