@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.buildndeploy.steplytics.MainActivity
@@ -69,7 +70,15 @@ class WorkoutTrackingService : Service() {
         )
         activeSession = session
         TrackingSessionStore.update(session)
-        startForeground(NOTIFICATION_ID, buildNotification(session))
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification(session))
+        } catch (securityException: SecurityException) {
+            Log.e(TAG, "Unable to start location foreground service", securityException)
+            activeSession = null
+            TrackingSessionStore.update(null)
+            stopSelf()
+            return
+        }
         startTimer()
         startLocationUpdates()
     }
@@ -212,6 +221,7 @@ class WorkoutTrackingService : Service() {
     }
 
     companion object {
+        private const val TAG = "WorkoutTrackingService"
         private const val CHANNEL_ID = "tracking_channel"
         private const val NOTIFICATION_ID = 2201
         const val EXTRA_OPEN_TRACKING = "open_tracking"
