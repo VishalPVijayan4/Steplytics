@@ -227,6 +227,7 @@ private val activityTypes = listOf(
     )
 )
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun HomeScreen(
     profile: UserProfile?,
@@ -344,30 +345,32 @@ fun HomeScreen(
             when {
                 selectedTab == DashboardTab.Home && homeFlow is HomeFlowState.ChooseActivity -> {
                     val selectedId = (homeFlow as HomeFlowState.ChooseActivity).selectedId
-                    ChooseActivityScreen(
-                        selectedId = selectedId,
-                        activities = activityTypes,
-                        onBack = { homeFlow = HomeFlowState.Overview },
-                        onActivitySelected = { activity ->
-                            homeFlow = HomeFlowState.ChooseActivity(selectedId = activity.id)
-                        },
-                        onStartTracking = {
-                            if (hasTrackingPermissions()) {
-                                val selectedActivity = activityTypes.firstOrNull { it.id == selectedId }
-                                if (selectedActivity != null) {
-                                    WorkoutTrackingService.start(
-                                        context = context,
-                                        activityId = selectedActivity.id,
-                                        activityTitle = selectedActivity.title,
-                                        caloriesPerMinute = selectedActivity.caloriesPerMinute,
-                                        userWeight = profile?.weight ?: 70f
-                                    )
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        ChooseActivityScreen(
+                            selectedId = selectedId,
+                            activities = activityTypes,
+                            onBack = { homeFlow = HomeFlowState.Overview },
+                            onActivitySelected = { activity ->
+                                homeFlow = HomeFlowState.ChooseActivity(selectedId = activity.id)
+                            },
+                            onStartTracking = {
+                                if (hasTrackingPermissions()) {
+                                    val selectedActivity = activityTypes.firstOrNull { it.id == selectedId }
+                                    if (selectedActivity != null) {
+                                        WorkoutTrackingService.start(
+                                            context = context,
+                                            activityId = selectedActivity.id,
+                                            activityTitle = selectedActivity.title,
+                                            caloriesPerMinute = selectedActivity.caloriesPerMinute,
+                                            userWeight = profile?.weight ?: 70f
+                                        )
+                                    }
+                                } else {
+                                    permissionLauncher.launch(permissions)
                                 }
-                            } else {
-                                permissionLauncher.launch(permissions)
                             }
-                        }
-                    )
+                        )
+                    }
                 }
 
                 selectedTab == DashboardTab.Home && homeFlow is HomeFlowState.Tracking -> {
@@ -423,18 +426,20 @@ fun HomeScreen(
 
                 selectedTab == DashboardTab.Home && homeFlow is HomeFlowState.Complete -> {
                     val workout = (homeFlow as HomeFlowState.Complete).workout
-                    WorkoutCompleteScreen(
-                        workout = workout,
-                        unitSystem = unitSystem,
-                        showShareHint = (homeFlow as HomeFlowState.Complete).showShareHint,
-                        onSave = { homeFlow = HomeFlowState.Overview },
-                        onShare = {
-                            val latest = homeFlow as? HomeFlowState.Complete
-                            if (latest != null) {
-                                homeFlow = latest.copy(showShareHint = !latest.showShareHint)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        WorkoutCompleteScreen(
+                            workout = workout,
+                            unitSystem = unitSystem,
+                            showShareHint = (homeFlow as HomeFlowState.Complete).showShareHint,
+                            onSave = { homeFlow = HomeFlowState.Overview },
+                            onShare = {
+                                val latest = homeFlow as? HomeFlowState.Complete
+                                if (latest != null) {
+                                    homeFlow = latest.copy(showShareHint = !latest.showShareHint)
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
 
                 else -> {
@@ -447,12 +452,15 @@ fun HomeScreen(
                             onToggleWeeklyBreakdown = { showWeeklyBreakdown = !showWeeklyBreakdown },
                             onStartActivity = { homeFlow = HomeFlowState.ChooseActivity() }
                         )
-                        DashboardTab.Calendar -> CalendarScreen(
-                            workouts = workouts,
-                            selectedDate = selectedCalendarDate,
-                            unitSystem = unitSystem,
-                            onDateSelected = { selectedCalendarDate = it }
-                        )
+                        DashboardTab.Calendar -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            CalendarScreen(
+                                workouts = workouts,
+                                selectedDate = selectedCalendarDate,
+                                unitSystem = unitSystem,
+                                onDateSelected = { selectedCalendarDate = it }
+                            )
+                        }
+
                         DashboardTab.Reports -> ReportsScreen(
                             workouts = workouts,
                             unitSystem = unitSystem,
