@@ -252,6 +252,7 @@ fun HomeScreen(
     initiallyOpenTracking: Boolean = false
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val preferencesDataSource = remember { SteplyticsPreferencesDataSource(context) }
     val repository = remember {
@@ -299,6 +300,22 @@ fun HomeScreen(
         }
     }
 
+    fun startTrackingSession(activity: ActivityTypeUi) {
+        val lifecycleReady = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        if (!lifecycleReady) {
+            Toast.makeText(context, "Keep Steplytics open while tracking starts.", Toast.LENGTH_SHORT).show()
+            homeFlow = HomeFlowState.ChooseActivity(activity.id)
+            return
+        }
+        WorkoutTrackingService.start(
+            context = context,
+            activityId = activity.id,
+            activityTitle = activity.title,
+            caloriesPerMinute = activity.caloriesPerMinute,
+            userWeight = profile?.weight ?: 70f
+        )
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -307,13 +324,7 @@ fun HomeScreen(
             val selectedId = (homeFlow as? HomeFlowState.ChooseActivity)?.selectedId
             val activity = activityTypes.firstOrNull { it.id == selectedId }
             if (activity != null) {
-                WorkoutTrackingService.start(
-                    context = context,
-                    activityId = activity.id,
-                    activityTitle = activity.title,
-                    caloriesPerMinute = activity.caloriesPerMinute,
-                    userWeight = profile?.weight ?: 70f
-                )
+                startTrackingSession(activity)
             }
         }
     }
@@ -406,13 +417,7 @@ fun HomeScreen(
                         onTick = { seconds -> homeFlow = countdown.copy(secondsRemaining = seconds) },
                         onFinished = {
                             if (hasTrackingPermissions()) {
-                                WorkoutTrackingService.start(
-                                    context = context,
-                                    activityId = countdown.activity.id,
-                                    activityTitle = countdown.activity.title,
-                                    caloriesPerMinute = countdown.activity.caloriesPerMinute,
-                                    userWeight = profile?.weight ?: 70f
-                                )
+                                startTrackingSession(countdown.activity)
                             } else {
                                 homeFlow = HomeFlowState.ChooseActivity(countdown.activity.id)
                                 permissionLauncher.launch(permissions)

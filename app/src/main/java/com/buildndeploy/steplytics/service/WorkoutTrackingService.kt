@@ -48,13 +48,21 @@ class WorkoutTrackingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START -> startTracking(intent)
-            ACTION_PAUSE -> pauseTracking()
-            ACTION_RESUME -> resumeTracking()
-            ACTION_STOP -> stopTracking()
+        return try {
+            when (intent?.action) {
+                ACTION_START -> startTracking(intent)
+                ACTION_PAUSE -> pauseTracking()
+                ACTION_RESUME -> resumeTracking()
+                ACTION_STOP -> stopTracking()
+            }
+            START_STICKY
+        } catch (securityException: SecurityException) {
+            Log.e(TAG, "Foreground tracking start blocked", securityException)
+            activeSession = null
+            TrackingSessionStore.update(null)
+            stopSelf()
+            START_NOT_STICKY
         }
-        return START_STICKY
     }
 
     @SuppressLint("MissingPermission")
@@ -70,19 +78,13 @@ class WorkoutTrackingService : Service() {
             userWeight = intent.getFloatExtra(EXTRA_USER_WEIGHT, 70f),
             startedAt = System.currentTimeMillis()
         )
+        lastLocationSample = null
+        lastEnvironmentRefreshAt = 0L
+        startForeground(NOTIFICATION_ID, buildNotification(session))
         activeSession = session
         lastLocationSample = null
         lastEnvironmentRefreshAt = 0L
         TrackingSessionStore.update(session)
-        try {
-            startForeground(NOTIFICATION_ID, buildNotification(session))
-        } catch (securityException: SecurityException) {
-            Log.e(TAG, "Unable to start location foreground service", securityException)
-            activeSession = null
-            TrackingSessionStore.update(null)
-            stopSelf()
-            return
-        }
         startTimer()
         startLocationUpdates()
     }
