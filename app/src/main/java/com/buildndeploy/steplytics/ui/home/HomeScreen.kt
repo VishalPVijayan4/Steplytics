@@ -14,6 +14,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -612,6 +614,7 @@ private fun WeeklyProgressCard(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun ChooseActivityScreen(
     selectedId: String?,
@@ -768,6 +771,7 @@ private fun TrackingScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun WorkoutCompleteScreen(
     workout: WorkoutRecord,
@@ -850,6 +854,7 @@ private fun WorkoutCompleteScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun CalendarScreen(
     workouts: List<WorkoutRecord>,
@@ -985,6 +990,53 @@ private fun CalendarScreen(
                 }
             }
         }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    return mapView
+}
+
+@Composable
+private fun ReportsScreen(
+    workouts: List<WorkoutRecord>,
+    unitSystem: UnitSystem,
+    reportRange: ReportRange,
+    onReportRangeChange: (ReportRange) -> Unit
+) {
+    val reportSummary = remember(workouts, reportRange) { buildReportSummary(workouts, reportRange) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        Text(
+            text = "Performance Reports",
+            style = MaterialTheme.typography.headlineSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
+
+        ReportRangeTabs(selectedRange = reportRange, onSelected = onReportRangeChange)
+
+        StatsGrid(
+            items = listOf(
+                "${reportSummary.averageSteps}" to "Avg Steps\n${reportSummary.stepDelta}",
+                "${reportSummary.averageCalories}" to "Avg Calories\n${reportSummary.calorieDelta}",
+                "${formatDistance(reportSummary.totalDistanceKm, unitSystem)} ${distanceUnit(unitSystem)}" to "Total Distance\n${reportSummary.distanceDelta}",
+                "${reportSummary.activeDays}/${reportSummary.periodLength}" to "Active Days\n${reportSummary.activeDayDelta}"
+            ),
+            useFullWidth = true
+        )
+
+        BarChartCard(
+            title = "Steps Overview",
+            labels = reportSummary.labels,
+            values = reportSummary.values
+        )
     }
 }
 
@@ -1445,6 +1497,7 @@ private fun WorkoutSummaryCard(workout: WorkoutRecord, unitSystem: UnitSystem) {
         Text(text = "${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • ${workout.caloriesKcal.toInt()} kcal", color = Color.White, style = MaterialTheme.typography.bodyLarge)
         Text(text = "Pace ${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)}", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
     }
+    return meters / 1_000f
 }
 
 @Composable
