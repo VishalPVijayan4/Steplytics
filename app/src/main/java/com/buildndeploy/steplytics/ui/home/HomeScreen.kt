@@ -8,7 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -204,6 +204,7 @@ private val activityTypes = listOf(
     )
 )
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun HomeScreen(
     profile: UserProfile?,
@@ -1250,6 +1251,7 @@ private fun ContentItem(date: CalendarUiState.Date, onClickListener: (CalendarUi
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 private fun workoutDate(workout: WorkoutRecord): LocalDate {
     return Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).toLocalDate()
 }
