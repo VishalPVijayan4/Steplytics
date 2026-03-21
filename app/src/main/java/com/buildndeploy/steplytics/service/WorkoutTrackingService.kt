@@ -56,6 +56,10 @@ class WorkoutTrackingService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun startTracking(intent: Intent) {
+        if (!hasLocationPermission()) {
+            stopSelf()
+            return
+        }
         val session = ActiveTrackingSession(
             activityId = intent.getStringExtra(EXTRA_ACTIVITY_ID).orEmpty(),
             activityTitle = intent.getStringExtra(EXTRA_ACTIVITY_TITLE).orEmpty(),
