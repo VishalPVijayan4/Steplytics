@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -65,8 +67,10 @@ fun OnboardingScreen(
 
     SteplyticsScaffold(modifier = modifier) {
         Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Column(
@@ -99,7 +103,8 @@ fun OnboardingScreen(
                 Text(
                     text = "Your personal fitness companion",
                     color = TextSecondary,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center
                 )
             }
 
@@ -107,24 +112,24 @@ fun OnboardingScreen(
                 state = pagerState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
+                    .height(360.dp)
             ) { pageIndex ->
                 val page = state.pages[pageIndex]
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .fillMaxSize()
                         .padding(horizontal = 8.dp)
                         .background(CardBackground, RoundedCornerShape(28.dp))
                         .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(68.dp)
+                            .size(72.dp)
                             .background(
                                 color = PrimaryBlue.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(20.dp)
+                                shape = RoundedCornerShape(22.dp)
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -140,21 +145,22 @@ fun OnboardingScreen(
                         color = Color.White,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 24.dp)
                     )
                     Text(
                         text = page.description,
                         color = TextSecondary,
                         style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 16.dp)
                     )
                 }
             }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 20.dp)
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 repeat(state.pages.size) { index ->
                     Box(
