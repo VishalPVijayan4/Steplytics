@@ -7,10 +7,16 @@ import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import android.os.Build
 import android.os.Bundle
+import android.os.CountDownTimer
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -59,6 +65,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,7 +108,9 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.MapView
 import com.google.android.gms.maps.MapsInitializer
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLngBounds
+import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -162,6 +171,7 @@ private data class DashboardInsight(
 private sealed interface HomeFlowState {
     data object Overview : HomeFlowState
     data class ChooseActivity(val selectedId: String? = null) : HomeFlowState
+    data class Countdown(val activity: ActivityTypeUi, val secondsRemaining: Int = 5) : HomeFlowState
     data class Tracking(val session: TrackingSession) : HomeFlowState
     data class Complete(
         val workout: WorkoutRecord,
@@ -179,7 +189,14 @@ private data class TrackingSession(
     val caloriesKcal: Float = 0f,
     val pacePerKm: Float = 0f,
     val currentAqi: Int? = null,
-    val currentLocation: RoutePoint? = null
+    val currentPollen: Int? = null,
+    val currentLocation: RoutePoint? = null,
+    val isStationary: Boolean = false,
+    val movingTimeSeconds: Long = 0,
+    val stationaryTimeSeconds: Long = 0,
+    val currentSpeedMps: Float = 0f,
+    val averageSpeedMps: Float = 0f,
+    val maxSpeedMps: Float = 0f
 )
 
 private object CalendarUiState {
@@ -231,9 +248,11 @@ private val activityTypes = listOf(
 @Composable
 fun HomeScreen(
     profile: UserProfile?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initiallyOpenTracking: Boolean = false
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val preferencesDataSource = remember { SteplyticsPreferencesDataSource(context) }
     val repository = remember {
@@ -256,12 +275,21 @@ fun HomeScreen(
         buildDashboardInsight(workouts, unitSystem)
     }
 
+    LaunchedEffect(initiallyOpenTracking, serviceSession) {
+        if (initiallyOpenTracking && serviceSession != null) {
+            selectedTab = DashboardTab.Home
+        }
+    }
+
     val permissions = remember {
         buildList {
             add(Manifest.permission.ACCESS_COARSE_LOCATION)
             add(Manifest.permission.ACCESS_FINE_LOCATION)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 add(Manifest.permission.ACTIVITY_RECOGNITION)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }.toTypedArray()
     }
@@ -272,6 +300,22 @@ fun HomeScreen(
         }
     }
 
+    fun startTrackingSession(activity: ActivityTypeUi) {
+        val lifecycleReady = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        if (!lifecycleReady) {
+            Toast.makeText(context, "Keep Steplytics open while tracking starts.", Toast.LENGTH_SHORT).show()
+            homeFlow = HomeFlowState.ChooseActivity(activity.id)
+            return
+        }
+        WorkoutTrackingService.start(
+            context = context,
+            activityId = activity.id,
+            activityTitle = activity.title,
+            caloriesPerMinute = activity.caloriesPerMinute,
+            userWeight = profile?.weight ?: 70f
+        )
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -280,13 +324,7 @@ fun HomeScreen(
             val selectedId = (homeFlow as? HomeFlowState.ChooseActivity)?.selectedId
             val activity = activityTypes.firstOrNull { it.id == selectedId }
             if (activity != null) {
-                WorkoutTrackingService.start(
-                    context = context,
-                    activityId = activity.id,
-                    activityTitle = activity.title,
-                    caloriesPerMinute = activity.caloriesPerMinute,
-                    userWeight = profile?.weight ?: 70f
-                )
+                startTrackingSession(activity)
             }
         }
     }
@@ -314,7 +352,14 @@ fun HomeScreen(
                         caloriesKcal = active.caloriesKcal,
                         pacePerKm = active.pacePerKm,
                         currentAqi = active.currentAqi,
-                        currentLocation = active.currentLocation
+                        currentPollen = active.currentPollen,
+                        currentLocation = active.currentLocation,
+                        isStationary = active.isStationary,
+                        movingTimeSeconds = active.movingTimeSeconds,
+                        stationaryTimeSeconds = active.stationaryTimeSeconds,
+                        currentSpeedMps = active.currentSpeedMps,
+                        averageSpeedMps = active.averageSpeedMps,
+                        maxSpeedMps = active.maxSpeedMps
                     )
                 )
             }
@@ -354,23 +399,31 @@ fun HomeScreen(
                                 homeFlow = HomeFlowState.ChooseActivity(selectedId = activity.id)
                             },
                             onStartTracking = {
-                                if (hasTrackingPermissions()) {
-                                    val selectedActivity = activityTypes.firstOrNull { it.id == selectedId }
-                                    if (selectedActivity != null) {
-                                        WorkoutTrackingService.start(
-                                            context = context,
-                                            activityId = selectedActivity.id,
-                                            activityTitle = selectedActivity.title,
-                                            caloriesPerMinute = selectedActivity.caloriesPerMinute,
-                                            userWeight = profile?.weight ?: 70f
-                                        )
-                                    }
-                                } else {
-                                    permissionLauncher.launch(permissions)
+                                val selectedActivity = activityTypes.firstOrNull { it.id == selectedId }
+                                if (selectedActivity != null) {
+                                    homeFlow = HomeFlowState.Countdown(selectedActivity)
                                 }
                             }
                         )
                     }
+                }
+
+                selectedTab == DashboardTab.Home && homeFlow is HomeFlowState.Countdown -> {
+                    val countdown = homeFlow as HomeFlowState.Countdown
+                    CountdownStartScreen(
+                        activity = countdown.activity,
+                        secondsRemaining = countdown.secondsRemaining,
+                        onBack = { homeFlow = HomeFlowState.ChooseActivity(countdown.activity.id) },
+                        onTick = { seconds -> homeFlow = countdown.copy(secondsRemaining = seconds) },
+                        onFinished = {
+                            if (hasTrackingPermissions()) {
+                                startTrackingSession(countdown.activity)
+                            } else {
+                                homeFlow = HomeFlowState.ChooseActivity(countdown.activity.id)
+                                permissionLauncher.launch(permissions)
+                            }
+                        }
+                    )
                 }
 
                 selectedTab == DashboardTab.Home && homeFlow is HomeFlowState.Tracking -> {
@@ -385,7 +438,12 @@ fun HomeScreen(
                         pacePerKm = session.pacePerKm,
                         caloriesKcal = session.caloriesKcal,
                         currentAqi = session.currentAqi,
-                        isStationary = serviceSession?.isStationary == true,
+                        currentPollen = session.currentPollen,
+                        currentLocation = session.currentLocation?.let { LatLng(it.latitude, it.longitude) },
+                        isStationary = session.isStationary,
+                        stationaryTimeSeconds = session.stationaryTimeSeconds,
+                        currentSpeedMps = session.currentSpeedMps,
+                        movingTimeSeconds = session.movingTimeSeconds,
                         onPauseResume = {
                             val latest = (homeFlow as? HomeFlowState.Tracking)?.session
                             if (latest != null) {
@@ -408,6 +466,11 @@ fun HomeScreen(
                                     caloriesKcal = latest.caloriesKcal,
                                     pacePerKm = latest.pacePerKm,
                                     avgAqi = latest.currentAqi,
+                                    avgPollen = latest.currentPollen,
+                                    movingTimeSeconds = latest.movingTimeSeconds,
+                                    stationaryTimeSeconds = latest.stationaryTimeSeconds,
+                                    averageSpeedMps = latest.averageSpeedMps,
+                                    maxSpeedMps = latest.maxSpeedMps,
                                     route = latest.route
                                 )
                                 val id = repository.insertWorkout(record)
@@ -673,6 +736,48 @@ private fun ChooseActivityScreen(
 }
 
 @Composable
+private fun CountdownStartScreen(
+    activity: ActivityTypeUi,
+    secondsRemaining: Int,
+    onBack: () -> Unit,
+    onTick: (Int) -> Unit,
+    onFinished: () -> Unit
+) {
+    val latestFinished by rememberUpdatedState(onFinished)
+    LaunchedEffect(activity.id) {
+        object : CountDownTimer(5_000, 1_000) {
+            override fun onTick(millisUntilFinished: Long) {
+                onTick(kotlin.math.ceil(millisUntilFinished / 1000.0).toInt())
+            }
+            override fun onFinish() { latestFinished() }
+        }.start()
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF1A2137))))
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        BackHeader(onBack = onBack)
+        Spacer(modifier = Modifier.weight(1f))
+        Box(
+            modifier = Modifier
+                .size(220.dp)
+                .background(Brush.radialGradient(activity.gradient), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(text = activity.badge, color = Color.White, fontSize = 88.sp, fontWeight = FontWeight.Bold)
+        }
+        Text(text = secondsRemaining.toString(), color = Color.White, style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black)
+        Text(text = "Get ready for ${activity.title.lowercase(Locale.getDefault())}", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(text = "Lock in your pace. Tracking starts automatically after the 5-second countdown.", color = TextSecondary, textAlign = TextAlign.Center)
+        Spacer(modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
 private fun TrackingScreen(
     activity: ActivityTypeUi,
     elapsedSeconds: Long,
@@ -683,10 +788,33 @@ private fun TrackingScreen(
     pacePerKm: Float,
     caloriesKcal: Float,
     currentAqi: Int?,
+    currentPollen: Int?,
+    currentLocation: LatLng?,
     isStationary: Boolean,
+    stationaryTimeSeconds: Long,
+    currentSpeedMps: Float,
+    movingTimeSeconds: Long,
     onPauseResume: () -> Unit,
     onStop: () -> Unit
 ) {
+    val context = LocalContext.current
+    var showAqi by remember { mutableStateOf(true) }
+    var showPollen by remember { mutableStateOf(true) }
+    var showInactivityDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isStationary, stationaryTimeSeconds) {
+        if (isStationary && stationaryTimeSeconds >= 10) {
+            showInactivityDialog = true
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (context.getSystemService(VibratorManager::class.java))?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Vibrator::class.java)
+            }
+            vibrator?.vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE))
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -700,63 +828,38 @@ private fun TrackingScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .background(if (isPaused) PrimaryBlue else PrimaryGreen, CircleShape)
-                    )
-                    Text(
-                        text = if (isPaused) "Tracking Paused" else "Tracking Active",
-                        color = TextSecondary,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                Text(
-                    text = if (isStationary) "User is constant" else (currentAqi?.let { "AQI $it" } ?: "AQI loading..."),
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Text(text = activity.title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(text = if (isPaused) "Paused • Tap resume when you're ready" else "Live tracking is locked in", color = TextSecondary)
             }
-            Text(
-                text = activity.title,
-                color = TextSecondary,
-                style = MaterialTheme.typography.bodyLarge
-            )
+            Text(text = formatElapsedTime(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleLarge)
         }
 
         WorkoutMapCard(
-            title = "Live Route Preview",
-            subtitle = if (routePoints.isEmpty()) "Waiting for current location..." else "Tracking your real route until pause or stop.",
+            title = "Live Route",
+            subtitle = currentLocation?.let { "Marker: ${String.format(Locale.US, "%.5f", it.latitude)}, ${String.format(Locale.US, "%.5f", it.longitude)}" } ?: "Waiting for your first location fix...",
             routePoints = routePoints,
-            followLatestPoint = true
+            followLatestPoint = true,
+            currentLocation = currentLocation,
+            markerInfo = if (isStationary) "Stationary for ${formatElapsedTime(stationaryTimeSeconds)}" else "Moving • ${String.format(Locale.US, "%.1f", currentSpeedMps * 3.6f)} km/h"
         )
 
-        SurfaceCard {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    text = formatElapsedTime(elapsedSeconds),
-                    color = Color.White,
-                    style = MaterialTheme.typography.displayLarge,
-                    fontWeight = FontWeight.Light
-                )
-                Text(
-                    text = "Duration",
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.bodyLarge
-                )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
+            MetricOverlayCard(modifier = Modifier.weight(1f), value = formatPace(pacePerKm, unitSystem), label = "Pace")
+            MetricOverlayCard(modifier = Modifier.weight(1f), value = caloriesKcal.toInt().toString(), label = "Calories")
+        }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    TrackingMetricColumn(value = formatDistance(distanceKm, unitSystem), label = "Distance", unit = distanceUnit(unitSystem))
-                    TrackingMetricColumn(value = formatPace(pacePerKm, unitSystem), label = "Pace", unit = paceUnit(unitSystem))
-                    TrackingMetricColumn(value = caloriesKcal.toInt().toString(), label = "Calories", unit = "kcal")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            ToggleChip(label = if (showAqi) "Hide AQI" else "Show AQI", selected = showAqi) { showAqi = !showAqi }
+            ToggleChip(label = if (showPollen) "Hide Pollen" else "Show Pollen", selected = showPollen) { showPollen = !showPollen }
+        }
+
+        AnimatedVisibility(visible = showAqi || showPollen) {
+            SurfaceCard {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (showAqi) Text(text = "AQI: ${currentAqi?.toString() ?: "--"}", color = Color.White)
+                    if (showPollen) Text(text = "Pollen: ${currentPollen?.toString() ?: "--"}", color = Color.White)
+                    Text(text = "Moving time ${formatElapsedTime(movingTimeSeconds)} • Idle ${formatElapsedTime(stationaryTimeSeconds)}", color = TextSecondary)
                 }
             }
         }
@@ -777,6 +880,17 @@ private fun TrackingScreen(
                 onClick = onStop
             )
         }
+    }
+
+    if (showInactivityDialog) {
+        AlertDialog(
+            onDismissRequest = { showInactivityDialog = false },
+            title = { Text("Tiny problem detected") },
+            text = { Text("You've been perfectly still for 10 seconds. Either you're stretching... or you became a decorative lawn statue.") },
+            confirmButton = {
+                TextButton(onClick = { showInactivityDialog = false }) { Text("I'm moving") }
+            }
+        )
     }
 }
 
@@ -828,7 +942,8 @@ private fun WorkoutCompleteScreen(
                     formatElapsedTime(workout.durationSeconds) to "Duration\nmin",
                     formatPace(workout.pacePerKm, unitSystem) to "Avg Pace\n${paceUnit(unitSystem)}",
                     workout.caloriesKcal.toInt().toString() to "Calories\nkcal",
-                    (workout.avgAqi?.toString() ?: "--") to "AQI\ncurrent"
+                    (workout.avgAqi?.toString() ?: "--") to "AQI\ncurrent",
+                    (workout.avgPollen?.toString() ?: "--") to "Pollen\ncurrent"
                 ),
                 useFullWidth = true
             )
@@ -1155,6 +1270,8 @@ private fun ActivityOptionCard(
     selected: Boolean,
     onClick: () -> Unit
 ) {
+    val cardAlpha by animateFloatAsState(targetValue = if (selected) 1f else 0.9f, label = "activity-card-alpha")
+    val previewScale by animateFloatAsState(targetValue = if (selected) 1.08f else 1f, label = "activity-card-scale")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1167,8 +1284,8 @@ private fun ActivityOptionCard(
     ) {
         Box(
             modifier = Modifier
-                .size(52.dp)
-                .background(Brush.horizontalGradient(activity.gradient), RoundedCornerShape(16.dp)),
+                .size((52 * previewScale).dp)
+                .background(Brush.horizontalGradient(activity.gradient.map { it.copy(alpha = cardAlpha) }), RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center
         ) {
             Text(text = activity.badge, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -1177,6 +1294,34 @@ private fun ActivityOptionCard(
             Text(text = activity.title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(text = activity.description, color = TextSecondary, style = MaterialTheme.typography.bodyLarge)
         }
+    }
+}
+
+@Composable
+private fun MetricOverlayCard(modifier: Modifier = Modifier, value: String, label: String) {
+    Box(
+        modifier = modifier
+            .background(Color(0x88212B46), RoundedCornerShape(20.dp))
+            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(20.dp))
+            .padding(horizontal = 14.dp, vertical = 16.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+            Text(text = value, color = Color.White, fontWeight = FontWeight.Bold)
+            Text(text = label, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun ToggleChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .background(if (selected) Color(0x3322C55E) else CardBackground, RoundedCornerShape(999.dp))
+            .border(1.dp, if (selected) PrimaryGreen else CardBorder, RoundedCornerShape(999.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Text(text = label, color = Color.White)
     }
 }
 
@@ -1199,7 +1344,9 @@ private fun WorkoutMapCard(
     title: String,
     subtitle: String,
     routePoints: List<LatLng>,
-    followLatestPoint: Boolean
+    followLatestPoint: Boolean,
+    currentLocation: LatLng? = routePoints.lastOrNull(),
+    markerInfo: String? = null
 ) {
     val context = LocalContext.current
     val mapView = rememberMapViewWithLifecycle()
@@ -1208,7 +1355,7 @@ private fun WorkoutMapCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(260.dp)
+                .height(340.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(Color(0xFF0D1326), RoundedCornerShape(20.dp))
         ) {
@@ -1226,6 +1373,15 @@ private fun WorkoutMapCard(
                         }
                         googleMap.clear()
                         if (routePoints.isNotEmpty()) {
+                            currentLocation?.let { location ->
+                                googleMap.addMarker(
+                                    MarkerOptions()
+                                        .position(location)
+                                        .title(title)
+                                        .snippet(markerInfo ?: subtitle)
+                                        .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                                )?.showInfoWindow()
+                            }
                             googleMap.addPolyline(
                                 PolylineOptions()
                                     .addAll(routePoints)

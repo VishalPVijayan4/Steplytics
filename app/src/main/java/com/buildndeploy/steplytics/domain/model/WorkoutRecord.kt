@@ -18,5 +18,10 @@ data class WorkoutRecord(
     val caloriesKcal: Float,
     val pacePerKm: Float,
     val avgAqi: Int?,
+    val avgPollen: Int?,
+    val movingTimeSeconds: Long,
+    val stationaryTimeSeconds: Long,
+    val averageSpeedMps: Float,
+    val maxSpeedMps: Float,
     val route: List<RoutePoint>
 )

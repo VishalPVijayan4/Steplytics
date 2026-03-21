@@ -34,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.util.Locale
+import kotlin.math.max
 
 class WorkoutTrackingService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -41,18 +42,27 @@ class WorkoutTrackingService : Service() {
     private val aqiService = AqiService()
     private var timerJob: Job? = null
     private var activeSession: ActiveTrackingSession? = null
-    private var lastSignificantPoint: RoutePoint? = null
+    private var lastLocationSample: Location? = null
+    private var lastEnvironmentRefreshAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START -> startTracking(intent)
-            ACTION_PAUSE -> pauseTracking()
-            ACTION_RESUME -> resumeTracking()
-            ACTION_STOP -> stopTracking()
+        return try {
+            when (intent?.action) {
+                ACTION_START -> startTracking(intent)
+                ACTION_PAUSE -> pauseTracking()
+                ACTION_RESUME -> resumeTracking()
+                ACTION_STOP -> stopTracking()
+            }
+            START_STICKY
+        } catch (securityException: SecurityException) {
+            Log.e(TAG, "Foreground tracking start blocked", securityException)
+            activeSession = null
+            TrackingSessionStore.update(null)
+            stopSelf()
+            START_NOT_STICKY
         }
-        return START_STICKY
     }
 
     @SuppressLint("MissingPermission")
@@ -68,17 +78,11 @@ class WorkoutTrackingService : Service() {
             userWeight = intent.getFloatExtra(EXTRA_USER_WEIGHT, 70f),
             startedAt = System.currentTimeMillis()
         )
+        lastLocationSample = null
+        lastEnvironmentRefreshAt = 0L
+        startForeground(NOTIFICATION_ID, buildNotification(session))
         activeSession = session
         TrackingSessionStore.update(session)
-        try {
-            startForeground(NOTIFICATION_ID, buildNotification(session))
-        } catch (securityException: SecurityException) {
-            Log.e(TAG, "Unable to start location foreground service", securityException)
-            activeSession = null
-            TrackingSessionStore.update(null)
-            stopSelf()
-            return
-        }
         startTimer()
         startLocationUpdates()
     }
@@ -106,6 +110,7 @@ class WorkoutTrackingService : Service() {
     private fun stopTracking() {
         timerJob?.cancel()
         locationClient.removeLocationUpdates(locationCallback)
+        activeSession = null
         TrackingSessionStore.update(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -118,10 +123,17 @@ class WorkoutTrackingService : Service() {
                 delay(1_000)
                 val session = activeSession ?: break
                 if (!session.isPaused) {
+                    val movingSeconds = if (session.isStationary) session.movingTimeSeconds else session.movingTimeSeconds + 1
+                    val stationarySeconds = if (session.isStationary) session.stationaryTimeSeconds + 1 else 0
+                    val speedFactor = max(session.currentSpeedMps / 1.4f, 0.35f)
+                    val calories = session.caloriesKcal + ((session.caloriesPerMinute / 60f) * speedFactor * (session.userWeight / 70f))
+                    val pace = if (session.distanceKm > 0f && movingSeconds > 0) (movingSeconds / 60f) / session.distanceKm else 0f
                     val updated = session.copy(
                         elapsedSeconds = session.elapsedSeconds + 1,
-                        caloriesKcal = ((session.elapsedSeconds + 1) / 60f) * session.caloriesPerMinute * (session.userWeight / 70f),
-                        pacePerKm = if (session.distanceKm > 0f) ((session.elapsedSeconds + 1) / 60f) / session.distanceKm else 0f
+                        caloriesKcal = calories,
+                        pacePerKm = pace,
+                        movingTimeSeconds = movingSeconds,
+                        stationaryTimeSeconds = stationarySeconds
                     )
                     activeSession = updated
                     TrackingSessionStore.update(updated)
@@ -135,7 +147,7 @@ class WorkoutTrackingService : Service() {
     private fun startLocationUpdates() {
         if (!hasLocationPermission()) return
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3_000L)
-            .setMinUpdateDistanceMeters(3f)
+            .setMinUpdateDistanceMeters(2f)
             .build()
         serviceScope.launch {
             locationClient.lastLocation.await()?.let { handleLocation(it) }
@@ -152,32 +164,56 @@ class WorkoutTrackingService : Service() {
     private fun handleLocation(location: Location) {
         val session = activeSession ?: return
         if (session.isPaused) return
+
         val point = RoutePoint(location.latitude, location.longitude)
-        val updatedRoute = if (session.route.lastOrNull() == point) session.route else session.route + point
+        val previousLocation = lastLocationSample
+        val segmentMeters = if (previousLocation != null) previousLocation.distanceTo(location) else 0f
+        val rawSpeed = when {
+            location.hasSpeed() && location.speed >= 0f -> location.speed
+            previousLocation != null -> {
+                val seconds = ((location.time - previousLocation.time).coerceAtLeast(1L)) / 1000f
+                if (seconds > 0f) segmentMeters / seconds else 0f
+            }
+            else -> 0f
+        }
+        val isStationary = rawSpeed < STATIONARY_SPEED_MPS && segmentMeters < STATIONARY_DISTANCE_METERS
+        val shouldAppendRoutePoint = session.route.isEmpty() || segmentMeters >= ROUTE_APPEND_DISTANCE_METERS
+        val updatedRoute = if (shouldAppendRoutePoint) session.route + point else session.route
         val distanceKm = calculateDistanceKm(updatedRoute)
-        val previous = lastSignificantPoint
-        val stationary = previous != null && distanceBetween(previous, point) < 5f
-        lastSignificantPoint = point
+        val movingSeconds = if (isStationary) session.movingTimeSeconds else session.movingTimeSeconds
+        val averageSpeed = if (movingSeconds > 0 && distanceKm > 0f) (distanceKm * 1000f) / movingSeconds else session.averageSpeedMps
         val updated = session.copy(
             route = updatedRoute,
             currentLocation = point,
             distanceKm = distanceKm,
-            pacePerKm = if (distanceKm > 0f) (session.elapsedSeconds / 60f) / distanceKm else 0f,
-            gpsEnabledMessage = if (hasLocationPermission()) "GPS enabled" else "Enable GPS",
-            isStationary = stationary
+            pacePerKm = if (distanceKm > 0f && session.movingTimeSeconds > 0) (session.movingTimeSeconds / 60f) / distanceKm else 0f,
+            gpsEnabledMessage = if (hasLocationPermission()) "GPS locked" else "Enable GPS",
+            isStationary = isStationary,
+            currentSpeedMps = rawSpeed,
+            averageSpeedMps = averageSpeed,
+            maxSpeedMps = max(session.maxSpeedMps, rawSpeed)
         )
+        lastLocationSample = location
         activeSession = updated
         TrackingSessionStore.update(updated)
         updateNotification(updated)
-        if (updated.currentAqi == null) {
-            serviceScope.launch(Dispatchers.IO) {
-                val aqi = aqiService.fetchCurrentUsAqi(point.latitude, point.longitude)
-                val latest = activeSession ?: return@launch
-                val finalSession = latest.copy(currentAqi = aqi)
-                activeSession = finalSession
-                TrackingSessionStore.update(finalSession)
-                updateNotification(finalSession)
-            }
+        refreshEnvironmentIfNeeded(point)
+    }
+
+    private fun refreshEnvironmentIfNeeded(point: RoutePoint) {
+        val now = System.currentTimeMillis()
+        if (now - lastEnvironmentRefreshAt < ENVIRONMENT_REFRESH_MS) return
+        lastEnvironmentRefreshAt = now
+        serviceScope.launch(Dispatchers.IO) {
+            val snapshot = aqiService.fetchEnvironmentSnapshot(point.latitude, point.longitude) ?: return@launch
+            val latest = activeSession ?: return@launch
+            val finalSession = latest.copy(
+                currentAqi = snapshot.aqi,
+                currentPollen = snapshot.pollen
+            )
+            activeSession = finalSession
+            TrackingSessionStore.update(finalSession)
+            updateNotification(finalSession)
         }
     }
 
@@ -193,10 +229,20 @@ class WorkoutTrackingService : Service() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val contentText = buildString {
+            append(formatDistance(session.distanceKm))
+            append(" • ")
+            append(formatPace(session.pacePerKm))
+            append(" pace")
+            append(" • ")
+            append(session.caloriesKcal.toInt())
+            append(" kcal")
+        }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("${session.activityTitle} • ${formatElapsedTime(session.elapsedSeconds)}")
-            .setContentText(session.gpsEnabledMessage)
+            .setContentText(contentText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$contentText\nTap to return to live tracking"))
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
@@ -224,6 +270,10 @@ class WorkoutTrackingService : Service() {
         private const val TAG = "WorkoutTrackingService"
         private const val CHANNEL_ID = "tracking_channel"
         private const val NOTIFICATION_ID = 2201
+        private const val STATIONARY_SPEED_MPS = 0.6f
+        private const val STATIONARY_DISTANCE_METERS = 2f
+        private const val ROUTE_APPEND_DISTANCE_METERS = 2f
+        private const val ENVIRONMENT_REFRESH_MS = 60_000L
         const val EXTRA_OPEN_TRACKING = "open_tracking"
         private const val EXTRA_ACTIVITY_ID = "activity_id"
         private const val EXTRA_ACTIVITY_TITLE = "activity_title"
@@ -276,6 +326,14 @@ class WorkoutTrackingService : Service() {
             val minutes = totalSeconds / 60
             val seconds = totalSeconds % 60
             return String.format(Locale.US, "%02d:%02d", minutes, seconds)
+        }
+
+        private fun formatDistance(distanceKm: Float): String = String.format(Locale.US, "%.2f km", distanceKm)
+
+        private fun formatPace(pacePerKm: Float): String {
+            if (pacePerKm <= 0f || pacePerKm.isNaN() || pacePerKm.isInfinite()) return "00:00"
+            val seconds = (pacePerKm * 60).toInt()
+            return String.format(Locale.US, "%02d:%02d", seconds / 60, seconds % 60)
         }
     }
 }
