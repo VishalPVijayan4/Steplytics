@@ -37,13 +37,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.QueryStats
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material.icons.outlined.Timelapse
 import androidx.compose.material.icons.outlined.Whatshot
@@ -626,6 +623,7 @@ private fun WeeklyProgressCard(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun ChooseActivityScreen(
     selectedId: String?,
@@ -782,6 +780,7 @@ private fun TrackingScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun WorkoutCompleteScreen(
     workout: WorkoutRecord,
@@ -999,7 +998,11 @@ private fun CalendarScreen(
                 }
             }
         }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
     }
+
+    return mapView
 }
 
 @Composable
@@ -1459,6 +1462,7 @@ private fun WorkoutSummaryCard(workout: WorkoutRecord, unitSystem: UnitSystem) {
         Text(text = "${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • ${workout.caloriesKcal.toInt()} kcal", color = Color.White, style = MaterialTheme.typography.bodyLarge)
         Text(text = "Pace ${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)}", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
     }
+    return meters / 1_000f
 }
 
 @Composable
