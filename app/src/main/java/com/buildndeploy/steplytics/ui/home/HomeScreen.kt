@@ -12,7 +12,6 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -239,7 +238,6 @@ private val activityTypes = listOf(
     )
 )
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun HomeScreen(
     profile: UserProfile?,
@@ -1003,6 +1001,32 @@ private fun CalendarScreen(
                     WorkoutSummaryCard(workout = workout, unitSystem = unitSystem)
                 }
             }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            StatsGrid(
+                items = listOf(
+                    formatDistance(totalDistance, unitSystem) to "Distance\n${distanceUnit(unitSystem)}",
+                    formatElapsedTime(totalDuration) to "Duration\nmin",
+                    totalCalories.toInt().toString() to "Calories\nkcal",
+                    (avgAqi?.toString() ?: "--") to "AQI\navg"
+                ),
+                useFullWidth = true
+            )
+        }
+
+        if (dayWorkouts.isNotEmpty()) {
+            Text(
+                text = "Workout Details",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                items(dayWorkouts, key = { it.id }) { workout ->
+                    WorkoutSummaryCard(workout = workout, unitSystem = unitSystem)
+                }
+            }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
@@ -1054,7 +1078,6 @@ private fun ReportsScreen(
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun ProfileScreen(
     profile: UserProfile?,
@@ -1450,7 +1473,6 @@ private fun BarChartCard(title: String, labels: List<String>, values: List<Float
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun WorkoutSummaryCard(workout: WorkoutRecord, unitSystem: UnitSystem) {
     Column(
@@ -1730,7 +1752,6 @@ private fun ContentItem(date: CalendarUiState.Date, onClickListener: (CalendarUi
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 private fun workoutDate(workout: WorkoutRecord): LocalDate {
     return Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).toLocalDate()
 }
@@ -1787,7 +1808,6 @@ private fun formatCompactNumber(value: Int): String {
 
 private fun estimateSteps(distanceKm: Float): Int = (distanceKm * 1312f).toInt()
 
-@RequiresApi(Build.VERSION_CODES.O)
 private fun buildDashboardInsight(workouts: List<WorkoutRecord>, unitSystem: UnitSystem): DashboardInsight {
     val endDate = LocalDate.now()
     val weekDays = (6 downTo 0).map { endDate.minusDays(it.toLong()) }
@@ -1846,7 +1866,6 @@ private fun buildReportSummary(workouts: List<WorkoutRecord>, reportRange: Repor
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.O)
     fun workoutsForSlot(slot: LocalDateTime, range: ReportRange, source: List<WorkoutRecord>): List<WorkoutRecord> {
         return when (range) {
             ReportRange.Daily -> source.filter {
