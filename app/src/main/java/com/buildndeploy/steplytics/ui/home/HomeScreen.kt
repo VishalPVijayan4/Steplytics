@@ -8,7 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,8 +52,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -68,9 +74,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.buildndeploy.steplytics.data.local.workout.WorkoutDatabase
 import com.buildndeploy.steplytics.data.remote.AqiService
 import com.buildndeploy.steplytics.data.repository.WorkoutRepository
+import com.buildndeploy.steplytics.domain.model.ActiveTrackingSession
 import com.buildndeploy.steplytics.domain.model.RoutePoint
 import com.buildndeploy.steplytics.domain.model.UserProfile
 import com.buildndeploy.steplytics.domain.model.WorkoutRecord
+import com.buildndeploy.steplytics.service.TrackingSessionStore
+import com.buildndeploy.steplytics.service.WorkoutTrackingService
 import com.buildndeploy.steplytics.ui.theme.AppBackground
 import com.buildndeploy.steplytics.ui.theme.CardBackground
 import com.buildndeploy.steplytics.ui.theme.CardBorder
@@ -195,7 +204,6 @@ private val activityTypes = listOf(
     )
 )
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun HomeScreen(
     profile: UserProfile?,
@@ -209,6 +217,7 @@ fun HomeScreen(
     val aqiService = remember { AqiService() }
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val workouts by repository.observeWorkouts().collectAsState(initial = emptyList())
+    val serviceSession by TrackingSessionStore.session.collectAsState()
 
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
     var homeFlow by remember { mutableStateOf<HomeFlowState>(HomeFlowState.Overview) }
@@ -237,66 +246,48 @@ fun HomeScreen(
             val selectedId = (homeFlow as? HomeFlowState.ChooseActivity)?.selectedId
             val activity = activityTypes.firstOrNull { it.id == selectedId }
             if (activity != null) {
-                homeFlow = HomeFlowState.Tracking(TrackingSession(activity = activity))
-            }
-        }
-    }
-
-    val trackingFlow = (homeFlow as? HomeFlowState.Tracking)?.session
-    LaunchedEffect(trackingFlow?.startedAt, trackingFlow?.isPaused) {
-        if (trackingFlow != null && !trackingFlow.isPaused) {
-            while (true) {
-                delay(1_000)
-                val current = (homeFlow as? HomeFlowState.Tracking)?.session ?: break
-                homeFlow = HomeFlowState.Tracking(
-                    current.copy(
-                        elapsedSeconds = current.elapsedSeconds + 1,
-                        caloriesKcal = calculateCalories(
-                            activity = current.activity,
-                            elapsedSeconds = current.elapsedSeconds + 1,
-                            userWeight = profile?.weight
-                        ),
-                        pacePerKm = calculatePacePerKm(
-                            elapsedSeconds = current.elapsedSeconds + 1,
-                            distanceKm = current.distanceKm
-                        )
-                    )
+                WorkoutTrackingService.start(
+                    context = context,
+                    activityId = activity.id,
+                    activityTitle = activity.title,
+                    caloriesPerMinute = activity.caloriesPerMinute,
+                    userWeight = profile?.weight ?: 70f
                 )
             }
         }
     }
 
-    LaunchedEffect(trackingFlow?.startedAt, trackingFlow?.isPaused) {
-        val session = (homeFlow as? HomeFlowState.Tracking)?.session ?: return@LaunchedEffect
-        if (session.isPaused || !hasTrackingPermissions()) return@LaunchedEffect
-
-        observeLocationUpdates(fusedLocationClient).collect { location ->
-            val currentSession = (homeFlow as? HomeFlowState.Tracking)?.session ?: return@collect
-            val point = RoutePoint(location.latitude, location.longitude)
-            val updatedRoute = if (currentSession.route.lastOrNull() == point) {
-                currentSession.route
-            } else {
-                currentSession.route + point
+    val trackingFlow = (homeFlow as? HomeFlowState.Tracking)?.session
+    LaunchedEffect(serviceSession) {
+        val active = serviceSession
+        when {
+            active != null -> {
+                val activity = activityTypes.firstOrNull { it.id == active.activityId }
+                    ?: ActivityTypeUi(
+                        id = active.activityId,
+                        title = active.activityTitle,
+                        description = active.activityTitle,
+                        badge = active.activityTitle.firstOrNull()?.uppercase() ?: "A",
+                        gradient = listOf(PrimaryBlue, PrimaryGreen),
+                        caloriesPerMinute = active.caloriesPerMinute
+                    )
+                homeFlow = HomeFlowState.Tracking(
+                    TrackingSession(
+                        activity = activity,
+                        startedAt = active.startedAt,
+                        elapsedSeconds = active.elapsedSeconds,
+                        isPaused = active.isPaused,
+                        route = active.route,
+                        distanceKm = active.distanceKm,
+                        caloriesKcal = active.caloriesKcal,
+                        pacePerKm = active.pacePerKm,
+                        currentAqi = active.currentAqi,
+                        currentLocation = active.currentLocation
+                    )
+                )
             }
-            val distanceKm = calculateDistanceKm(updatedRoute)
-            val updatedSession = currentSession.copy(
-                route = updatedRoute,
-                currentLocation = point,
-                distanceKm = distanceKm,
-                pacePerKm = calculatePacePerKm(currentSession.elapsedSeconds, distanceKm),
-                caloriesKcal = calculateCalories(currentSession.activity, currentSession.elapsedSeconds, profile?.weight)
-            )
-            homeFlow = HomeFlowState.Tracking(updatedSession)
+            active == null && homeFlow is HomeFlowState.Tracking -> Unit
         }
-    }
-
-    LaunchedEffect(trackingFlow?.currentLocation?.latitude, trackingFlow?.currentLocation?.longitude) {
-        val session = (homeFlow as? HomeFlowState.Tracking)?.session ?: return@LaunchedEffect
-        val point = session.currentLocation ?: return@LaunchedEffect
-        if (session.currentAqi != null) return@LaunchedEffect
-        val currentAqi = aqiService.fetchCurrentUsAqi(point.latitude, point.longitude)
-        val latest = (homeFlow as? HomeFlowState.Tracking)?.session ?: return@LaunchedEffect
-        homeFlow = HomeFlowState.Tracking(latest.copy(currentAqi = currentAqi))
     }
 
     val isFocusedWorkoutFlow = selectedTab == DashboardTab.Home && homeFlow != HomeFlowState.Overview
@@ -333,7 +324,13 @@ fun HomeScreen(
                             if (hasTrackingPermissions()) {
                                 val selectedActivity = activityTypes.firstOrNull { it.id == selectedId }
                                 if (selectedActivity != null) {
-                                    homeFlow = HomeFlowState.Tracking(TrackingSession(activity = selectedActivity))
+                                    WorkoutTrackingService.start(
+                                        context = context,
+                                        activityId = selectedActivity.id,
+                                        activityTitle = selectedActivity.title,
+                                        caloriesPerMinute = selectedActivity.caloriesPerMinute,
+                                        userWeight = profile?.weight ?: 70f
+                                    )
                                 }
                             } else {
                                 permissionLauncher.launch(permissions)
@@ -353,17 +350,22 @@ fun HomeScreen(
                         pacePerKm = session.pacePerKm,
                         caloriesKcal = session.caloriesKcal,
                         currentAqi = session.currentAqi,
+                        isStationary = serviceSession?.isStationary == true,
                         onPauseResume = {
                             val latest = (homeFlow as? HomeFlowState.Tracking)?.session
                             if (latest != null) {
-                                homeFlow = HomeFlowState.Tracking(latest.copy(isPaused = !latest.isPaused))
+                                if (latest.isPaused) {
+                                    WorkoutTrackingService.resume(context)
+                                } else {
+                                    WorkoutTrackingService.pause(context)
+                                }
                             }
                         },
                         onStop = {
                             scope.launch(Dispatchers.IO) {
-                                val latest = (homeFlow as? HomeFlowState.Tracking)?.session ?: return@launch
+                                val latest = serviceSession ?: return@launch
                                 val record = WorkoutRecord(
-                                    activityType = latest.activity.title,
+                                    activityType = latest.activityTitle,
                                     startedAt = latest.startedAt,
                                     endedAt = System.currentTimeMillis(),
                                     durationSeconds = latest.elapsedSeconds,
@@ -374,6 +376,7 @@ fun HomeScreen(
                                     route = latest.route
                                 )
                                 val id = repository.insertWorkout(record)
+                                WorkoutTrackingService.stop(context)
                                 val savedRecord = record.copy(id = id)
                                 launch(Dispatchers.Main) {
                                     selectedCalendarDate = Instant.ofEpochMilli(savedRecord.startedAt)
@@ -520,6 +523,7 @@ private fun TrackingScreen(
     pacePerKm: Float,
     caloriesKcal: Float,
     currentAqi: Int?,
+    isStationary: Boolean,
     onPauseResume: () -> Unit,
     onStop: () -> Unit
 ) {
@@ -549,7 +553,7 @@ private fun TrackingScreen(
                     )
                 }
                 Text(
-                    text = currentAqi?.let { "AQI $it" } ?: "AQI loading...",
+                    text = if (isStationary) "User is constant" else (currentAqi?.let { "AQI $it" } ?: "AQI loading..."),
                     color = Color.White,
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -1246,7 +1250,6 @@ private fun ContentItem(date: CalendarUiState.Date, onClickListener: (CalendarUi
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 private fun workoutDate(workout: WorkoutRecord): LocalDate {
     return Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).toLocalDate()
 }
