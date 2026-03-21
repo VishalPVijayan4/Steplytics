@@ -1,12 +1,10 @@
 package com.buildndeploy.steplytics.ui.home
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
-import android.location.Location
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -65,9 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -100,9 +96,6 @@ import com.buildndeploy.steplytics.ui.theme.CardBorder
 import com.buildndeploy.steplytics.ui.theme.PrimaryBlue
 import com.buildndeploy.steplytics.ui.theme.PrimaryGreen
 import com.buildndeploy.steplytics.ui.theme.TextSecondary
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.MapView
 import com.google.android.gms.maps.MapsInitializer
@@ -110,12 +103,7 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.maps.model.PolylineOptions
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
@@ -1001,38 +989,55 @@ private fun CalendarScreen(
                     WorkoutSummaryCard(workout = workout, unitSystem = unitSystem)
                 }
             }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            StatsGrid(
-                items = listOf(
-                    formatDistance(totalDistance, unitSystem) to "Distance\n${distanceUnit(unitSystem)}",
-                    formatElapsedTime(totalDuration) to "Duration\nmin",
-                    totalCalories.toInt().toString() to "Calories\nkcal",
-                    (avgAqi?.toString() ?: "--") to "AQI\navg"
-                ),
-                useFullWidth = true
-            )
-        }
-
-        if (dayWorkouts.isNotEmpty()) {
-            Text(
-                text = "Workout Details",
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                items(dayWorkouts, key = { it.id }) { workout ->
-                    WorkoutSummaryCard(workout = workout, unitSystem = unitSystem)
-                }
-            }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
 
     return mapView
+}
+
+@Composable
+private fun ReportsScreen(
+    workouts: List<WorkoutRecord>,
+    unitSystem: UnitSystem,
+    reportRange: ReportRange,
+    onReportRangeChange: (ReportRange) -> Unit
+) {
+    val reportSummary = remember(workouts, reportRange) { buildReportSummary(workouts, reportRange) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        Text(
+            text = "Performance Reports",
+            style = MaterialTheme.typography.headlineSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
+
+        ReportRangeTabs(selectedRange = reportRange, onSelected = onReportRangeChange)
+
+        StatsGrid(
+            items = listOf(
+                "${reportSummary.averageSteps}" to "Avg Steps\n${reportSummary.stepDelta}",
+                "${reportSummary.averageCalories}" to "Avg Calories\n${reportSummary.calorieDelta}",
+                "${formatDistance(reportSummary.totalDistanceKm, unitSystem)} ${distanceUnit(unitSystem)}" to "Total Distance\n${reportSummary.distanceDelta}",
+                "${reportSummary.activeDays}/${reportSummary.periodLength}" to "Active Days\n${reportSummary.activeDayDelta}"
+            ),
+            useFullWidth = true
+        )
+
+        BarChartCard(
+            title = "Steps Overview",
+            labels = reportSummary.labels,
+            values = reportSummary.values
+        )
+    }
 }
 
 @Composable
@@ -2012,49 +2017,3 @@ private fun createWorkoutPdf(directory: File, workouts: List<WorkoutRecord>, uni
     document.close()
     return file
 }
-
-private fun calculateDistanceKm(route: List<RoutePoint>): Float {
-    if (route.size < 2) return 0f
-    var meters = 0f
-    for (i in 1 until route.size) {
-        val results = FloatArray(1)
-        Location.distanceBetween(
-            route[i - 1].latitude,
-            route[i - 1].longitude,
-            route[i].latitude,
-            route[i].longitude,
-            results
-        )
-        meters += results[0]
-    }
-    return meters / 1_000f
-}
-
-private fun calculatePacePerKm(elapsedSeconds: Long, distanceKm: Float): Float {
-    if (distanceKm <= 0f) return 0f
-    return (elapsedSeconds / 60f) / distanceKm
-}
-
-private fun calculateCalories(activity: ActivityTypeUi, elapsedSeconds: Long, userWeight: Float?): Float {
-    val weightFactor = (userWeight ?: 70f) / 70f
-    return (elapsedSeconds / 60f) * activity.caloriesPerMinute * weightFactor
-}
-
-@SuppressLint("MissingPermission")
-private fun observeLocationUpdates(
-    fusedLocationClient: com.google.android.gms.location.FusedLocationProviderClient
-) = callbackFlow<Location> {
-    val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3_000L)
-        .setMinUpdateDistanceMeters(3f)
-        .build()
-
-    val callback = object : com.google.android.gms.location.LocationCallback() {
-        override fun onLocationResult(result: com.google.android.gms.location.LocationResult) {
-            result.lastLocation?.let { trySend(it) }
-        }
-    }
-
-    fusedLocationClient.lastLocation.await()?.let { trySend(it) }
-    fusedLocationClient.requestLocationUpdates(request, callback, android.os.Looper.getMainLooper())
-    awaitClose { fusedLocationClient.removeLocationUpdates(callback) }
-}.conflate()
