@@ -2,16 +2,21 @@ package com.buildndeploy.steplytics.ui.home
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Paint
+import android.graphics.pdf.PdfDocument
 import android.location.Location
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,9 +25,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,10 +44,12 @@ import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material.icons.outlined.Timelapse
 import androidx.compose.material.icons.outlined.Whatshot
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -69,13 +79,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.buildndeploy.steplytics.data.local.SteplyticsPreferencesDataSource
 import com.buildndeploy.steplytics.data.local.workout.WorkoutDatabase
-import com.buildndeploy.steplytics.data.remote.AqiService
 import com.buildndeploy.steplytics.data.repository.WorkoutRepository
-import com.buildndeploy.steplytics.domain.model.ActiveTrackingSession
 import com.buildndeploy.steplytics.domain.model.RoutePoint
+import com.buildndeploy.steplytics.domain.model.UnitSystem
 import com.buildndeploy.steplytics.domain.model.UserProfile
 import com.buildndeploy.steplytics.domain.model.WorkoutRecord
 import com.buildndeploy.steplytics.service.TrackingSessionStore
@@ -102,8 +113,11 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.File
+import java.io.FileOutputStream
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -134,6 +148,23 @@ private data class ActivityTypeUi(
     val badge: String,
     val gradient: List<Color>,
     val caloriesPerMinute: Float
+)
+
+private enum class ReportRange(val label: String) {
+    Daily("Daily"),
+    Weekly("Weekly"),
+    Monthly("Monthly")
+}
+
+private enum class ExportFormat(val label: String) {
+    Csv("Excel (.csv)"),
+    Pdf("PDF")
+}
+
+private data class DashboardInsight(
+    val metrics: List<StatCardUi>,
+    val weeklyProgress: List<Float>,
+    val hourlyProgress: List<Float>
 )
 
 private sealed interface HomeFlowState {
@@ -211,17 +242,26 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val preferencesDataSource = remember { SteplyticsPreferencesDataSource(context) }
     val repository = remember {
         WorkoutRepository(WorkoutDatabase.getInstance(context).workoutDao())
     }
-    val aqiService = remember { AqiService() }
-    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val workouts by repository.observeWorkouts().collectAsState(initial = emptyList())
     val serviceSession by TrackingSessionStore.session.collectAsState()
+    val unitSystem by preferencesDataSource.observeUnitSystem().collectAsState(initial = UnitSystem.Metric)
+    val notificationsEnabled by preferencesDataSource.observeNotificationsEnabled().collectAsState(initial = true)
 
     var selectedTab by remember { mutableStateOf(DashboardTab.Home) }
     var homeFlow by remember { mutableStateOf<HomeFlowState>(HomeFlowState.Overview) }
     var selectedCalendarDate by remember { mutableStateOf(LocalDate.now()) }
+    var showWeeklyBreakdown by remember { mutableStateOf(false) }
+    var reportRange by remember { mutableStateOf(ReportRange.Weekly) }
+    var showUnitDialog by remember { mutableStateOf(false) }
+    var showNotificationDialog by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    val dashboardInsight = remember(workouts, unitSystem) {
+        buildDashboardInsight(workouts, unitSystem)
+    }
 
     val permissions = remember {
         buildList {
@@ -257,8 +297,6 @@ fun HomeScreen(
             }
         }
     }
-
-    val trackingFlow = (homeFlow as? HomeFlowState.Tracking)?.session
     LaunchedEffect(serviceSession) {
         val active = serviceSession
         when {
@@ -347,6 +385,7 @@ fun HomeScreen(
                         elapsedSeconds = session.elapsedSeconds,
                         routePoints = session.route.map { LatLng(it.latitude, it.longitude) },
                         isPaused = session.isPaused,
+                        unitSystem = unitSystem,
                         distanceKm = session.distanceKm,
                         pacePerKm = session.pacePerKm,
                         caloriesKcal = session.caloriesKcal,
@@ -394,6 +433,7 @@ fun HomeScreen(
                     val workout = (homeFlow as HomeFlowState.Complete).workout
                     WorkoutCompleteScreen(
                         workout = workout,
+                        unitSystem = unitSystem,
                         showShareHint = (homeFlow as HomeFlowState.Complete).showShareHint,
                         onSave = { homeFlow = HomeFlowState.Overview },
                         onShare = {
@@ -409,33 +449,101 @@ fun HomeScreen(
                     when (selectedTab) {
                         DashboardTab.Home -> DashboardOverviewScreen(
                             profile = profile,
+                            dashboardInsight = dashboardInsight,
+                            unitSystem = unitSystem,
+                            showWeeklyBreakdown = showWeeklyBreakdown,
+                            onToggleWeeklyBreakdown = { showWeeklyBreakdown = !showWeeklyBreakdown },
                             onStartActivity = { homeFlow = HomeFlowState.ChooseActivity() }
                         )
                         DashboardTab.Calendar -> CalendarScreen(
                             workouts = workouts,
                             selectedDate = selectedCalendarDate,
+                            unitSystem = unitSystem,
                             onDateSelected = { selectedCalendarDate = it }
                         )
-                        DashboardTab.Reports -> ReportsScreen(workouts = workouts)
-                        DashboardTab.Profile -> ProfileScreen(profile = profile, workouts = workouts)
+                        DashboardTab.Reports -> ReportsScreen(
+                            workouts = workouts,
+                            unitSystem = unitSystem,
+                            reportRange = reportRange,
+                            onReportRangeChange = { reportRange = it }
+                        )
+                        DashboardTab.Profile -> ProfileScreen(
+                            profile = profile,
+                            workouts = workouts,
+                            unitSystem = unitSystem,
+                            notificationsEnabled = notificationsEnabled,
+                            onUnitsClick = { showUnitDialog = true },
+                            onNotificationsClick = { showNotificationDialog = true },
+                            onExportClick = { showExportDialog = true }
+                        )
                     }
                 }
             }
         }
+    }
+
+    if (showUnitDialog) {
+        SelectionDialog(
+            title = "Units",
+            message = "Choose the measurement system that should be reflected across the application.",
+            options = UnitSystem.entries.associateWith { if (it == UnitSystem.Metric) "Metric (km, kg)" else "Imperial (mi, lb)" },
+            selected = unitSystem,
+            onDismiss = { showUnitDialog = false },
+            onConfirm = { selectedUnit ->
+                scope.launch {
+                    preferencesDataSource.saveUnitSystem(selectedUnit)
+                    showUnitDialog = false
+                }
+            }
+        )
+    }
+
+    if (showNotificationDialog) {
+        BooleanPreferenceDialog(
+            title = "Notifications",
+            enabled = notificationsEnabled,
+            enabledLabel = "Enabled",
+            disabledLabel = "Disabled",
+            onDismiss = { showNotificationDialog = false },
+            onSave = { enabled ->
+                scope.launch {
+                    preferencesDataSource.saveNotificationsEnabled(enabled)
+                    showNotificationDialog = false
+                }
+            }
+        )
+    }
+
+    if (showExportDialog) {
+        SelectionDialog(
+            title = "Export Data",
+            message = "Export your workout history in a shareable format.",
+            options = ExportFormat.entries.associateWith { it.label },
+            selected = null,
+            onDismiss = { showExportDialog = false },
+            onConfirm = { format ->
+                showExportDialog = false
+                exportWorkoutData(
+                    context = context,
+                    workouts = workouts,
+                    unitSystem = unitSystem,
+                    format = format
+                )
+            }
+        )
     }
 }
 
 @Composable
 private fun DashboardOverviewScreen(
     profile: UserProfile?,
+    dashboardInsight: DashboardInsight,
+    unitSystem: UnitSystem,
+    showWeeklyBreakdown: Boolean,
+    onToggleWeeklyBreakdown: () -> Unit,
     onStartActivity: () -> Unit
 ) {
-    val todayWorkoutsLabel = if (profile != null) "Ready for today's session?" else "Set your pace and begin"
-    val cards = listOf(
-        StatCardUi("Steps", "Live", "sensor ready", Icons.Outlined.Straighten, Color(0xFF172446)),
-        StatCardUi("Calories", "Track", "burn rate", Icons.Outlined.Whatshot, Color(0xFF112D32)),
-        StatCardUi("Distance", "Route", "km live", Icons.Outlined.Timelapse, Color(0xFF2A1A3A))
-    )
+    val todayWorkoutsLabel = if (profile != null) "Let's crush your goals today" else "Set your pace and begin"
 
     Column(
         modifier = Modifier
@@ -459,13 +567,63 @@ private fun DashboardOverviewScreen(
         StartActivityButton(onClick = onStartActivity)
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            cards.forEach { card ->
+            dashboardInsight.metrics.forEach { card ->
                 MetricCard(card = card, modifier = Modifier.weight(1f))
+            }
+        }
+
+        WeeklyProgressCard(
+            unitSystem = unitSystem,
+            weeklyProgress = dashboardInsight.weeklyProgress,
+            hourlyProgress = dashboardInsight.hourlyProgress,
+            showHourlyBreakdown = showWeeklyBreakdown,
+            onClick = onToggleWeeklyBreakdown
+        )
+    }
+}
+
+@Composable
+private fun WeeklyProgressCard(
+    unitSystem: UnitSystem,
+    weeklyProgress: List<Float>,
+    hourlyProgress: List<Float>,
+    showHourlyBreakdown: Boolean,
+    onClick: () -> Unit
+) {
+    SurfaceCard {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text = "Weekly Progress", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(text = if (showHourlyBreakdown) "Hourly view" else "Last 7 days", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            if (showHourlyBreakdown) {
+                BarChartCard(
+                    title = "24 Hour Activity",
+                    labels = (0 until 24).map { if (it % 3 == 0) it.toString().padStart(2, '0') else "" },
+                    values = hourlyProgress
+                )
+            } else {
+                LineChartCard(
+                    values = weeklyProgress,
+                    labels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"),
+                    unitLabel = if (unitSystem == UnitSystem.Metric) "Steps" else "Effort"
+                )
             }
         }
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun ChooseActivityScreen(
     selectedId: String?,
@@ -520,6 +678,7 @@ private fun TrackingScreen(
     elapsedSeconds: Long,
     routePoints: List<LatLng>,
     isPaused: Boolean,
+    unitSystem: UnitSystem,
     distanceKm: Float,
     pacePerKm: Float,
     caloriesKcal: Float,
@@ -595,8 +754,8 @@ private fun TrackingScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    TrackingMetricColumn(value = formatDecimal(distanceKm), label = "Distance", unit = "km")
-                    TrackingMetricColumn(value = formatPace(pacePerKm), label = "Pace", unit = "/km")
+                    TrackingMetricColumn(value = formatDistance(distanceKm, unitSystem), label = "Distance", unit = distanceUnit(unitSystem))
+                    TrackingMetricColumn(value = formatPace(pacePerKm, unitSystem), label = "Pace", unit = paceUnit(unitSystem))
                     TrackingMetricColumn(value = caloriesKcal.toInt().toString(), label = "Calories", unit = "kcal")
                 }
             }
@@ -621,9 +780,11 @@ private fun TrackingScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun WorkoutCompleteScreen(
     workout: WorkoutRecord,
+    unitSystem: UnitSystem,
     showShareHint: Boolean,
     onSave: () -> Unit,
     onShare: () -> Unit
@@ -663,9 +824,9 @@ private fun WorkoutCompleteScreen(
         SurfaceCard {
             StatsGrid(
                 items = listOf(
-                    formatDecimal(workout.distanceKm) to "Distance\nkm",
+                    formatDistance(workout.distanceKm, unitSystem) to "Distance\n${distanceUnit(unitSystem)}",
                     formatElapsedTime(workout.durationSeconds) to "Duration\nmin",
-                    formatPace(workout.pacePerKm) to "Avg Pace\n/km",
+                    formatPace(workout.pacePerKm, unitSystem) to "Avg Pace\n${paceUnit(unitSystem)}",
                     workout.caloriesKcal.toInt().toString() to "Calories\nkcal",
                     (workout.avgAqi?.toString() ?: "--") to "AQI\ncurrent"
                 ),
@@ -702,11 +863,11 @@ private fun WorkoutCompleteScreen(
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun CalendarScreen(
     workouts: List<WorkoutRecord>,
     selectedDate: LocalDate,
+    unitSystem: UnitSystem,
     onDateSelected: (LocalDate) -> Unit
 ) {
     val currentMonth = YearMonth.from(selectedDate)
@@ -815,7 +976,7 @@ private fun CalendarScreen(
 
             StatsGrid(
                 items = listOf(
-                    formatDecimal(totalDistance) to "Distance\nkm",
+                    formatDistance(totalDistance, unitSystem) to "Distance\n${distanceUnit(unitSystem)}",
                     formatElapsedTime(totalDuration) to "Duration\nmin",
                     totalCalories.toInt().toString() to "Calories\nkcal",
                     (avgAqi?.toString() ?: "--") to "AQI\navg"
@@ -823,16 +984,35 @@ private fun CalendarScreen(
                 useFullWidth = true
             )
         }
+
+        if (dayWorkouts.isNotEmpty()) {
+            Text(
+                text = "Workout Details",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                items(dayWorkouts, key = { it.id }) { workout ->
+                    WorkoutSummaryCard(workout = workout, unitSystem = unitSystem)
+                }
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
     }
+
+    return mapView
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
-private fun ReportsScreen(workouts: List<WorkoutRecord>) {
-    val totalDistance = workouts.sumOf { it.distanceKm.toDouble() }.toFloat()
-    val totalCalories = workouts.sumOf { it.caloriesKcal.toDouble() }.toFloat()
-    val activeDays = workouts.map { workoutDate(it) }.distinct().size
-    val avgDistance = if (workouts.isEmpty()) 0f else totalDistance / workouts.size
+private fun ReportsScreen(
+    workouts: List<WorkoutRecord>,
+    unitSystem: UnitSystem,
+    reportRange: ReportRange,
+    onReportRangeChange: (ReportRange) -> Unit
+) {
+    val reportSummary = remember(workouts, reportRange) { buildReportSummary(workouts, reportRange) }
 
     Column(
         modifier = Modifier
@@ -848,21 +1028,39 @@ private fun ReportsScreen(workouts: List<WorkoutRecord>) {
             fontWeight = FontWeight.Bold
         )
 
+        ReportRangeTabs(selectedRange = reportRange, onSelected = onReportRangeChange)
+
         StatsGrid(
             items = listOf(
-                formatDecimal(avgDistance) to "Avg Distance\nkm",
-                totalCalories.toInt().toString() to "Total Calories\nkcal",
-                formatDecimal(totalDistance) to "Total Distance\nkm",
-                activeDays.toString() to "Active Days"
+                "${reportSummary.averageSteps}" to "Avg Steps\n${reportSummary.stepDelta}",
+                "${reportSummary.averageCalories}" to "Avg Calories\n${reportSummary.calorieDelta}",
+                "${formatDistance(reportSummary.totalDistanceKm, unitSystem)} ${distanceUnit(unitSystem)}" to "Total Distance\n${reportSummary.distanceDelta}",
+                "${reportSummary.activeDays}/${reportSummary.periodLength}" to "Active Days\n${reportSummary.activeDayDelta}"
             ),
             useFullWidth = true
+        )
+
+        BarChartCard(
+            title = "Steps Overview",
+            labels = reportSummary.labels,
+            values = reportSummary.values
         )
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
-private fun ProfileScreen(profile: UserProfile?, workouts: List<WorkoutRecord>) {
+private fun ProfileScreen(
+    profile: UserProfile?,
+    workouts: List<WorkoutRecord>,
+    unitSystem: UnitSystem,
+    notificationsEnabled: Boolean,
+    onUnitsClick: () -> Unit,
+    onNotificationsClick: () -> Unit,
+    onExportClick: () -> Unit
+) {
+    val totalDistance = workouts.sumOf { it.distanceKm.toDouble() }.toFloat()
+    val totalCalories = workouts.sumOf { it.caloriesKcal.toDouble() }.toFloat()
+    val activeDays = workouts.map { workoutDate(it) }.distinct().size
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -878,22 +1076,43 @@ private fun ProfileScreen(profile: UserProfile?, workouts: List<WorkoutRecord>) 
         )
 
         SurfaceCard {
-            Text(
-                text = profile?.let { "${it.age} yrs • ${it.height} cm • ${it.weight} kg" }
-                    ?: "Complete your profile to personalize calories.",
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(18.dp))
+            ProfileHeader(profile = profile, unitSystem = unitSystem)
+            Spacer(modifier = Modifier.height(20.dp))
             StatsGrid(
                 items = listOf(
                     workouts.size.toString() to "Total Workouts",
-                    formatDecimal(workouts.sumOf { it.distanceKm.toDouble() }.toFloat()) to "Distance\nkm",
-                    workouts.sumOf { it.caloriesKcal.toDouble() }.toInt().toString() to "Calories\nkcal",
-                    workouts.map { workoutDate(it) }.distinct().size.toString() to "Active Days"
+                    formatDistance(totalDistance, unitSystem) to "Total Distance\n${distanceUnit(unitSystem)}",
+                    formatCompactNumber(totalCalories.toInt()) to "Total Calories\nkcal",
+                    activeDays.toString() to "Active Days"
                 ),
                 useFullWidth = true
+            )
+        }
+
+        Text(text = "Preferences", color = TextSecondary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        SurfaceCard {
+            PreferenceRow(
+                icon = Icons.Outlined.Settings,
+                title = "Units",
+                subtitle = if (unitSystem == UnitSystem.Metric) "Metric (km, kg)" else "Imperial (mi, lb)",
+                onClick = onUnitsClick
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            PreferenceRow(
+                icon = Icons.Outlined.NotificationsNone,
+                title = "Notifications",
+                subtitle = if (notificationsEnabled) "Enabled" else "Disabled",
+                onClick = onNotificationsClick
+            )
+        }
+
+        Text(text = "Data", color = TextSecondary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        SurfaceCard {
+            PreferenceRow(
+                icon = Icons.Outlined.Download,
+                title = "Export Data",
+                subtitle = "Share your workouts as PDF or Excel-friendly CSV",
+                onClick = onExportClick
             )
         }
     }
@@ -1139,6 +1358,258 @@ private fun MetricCard(card: StatCardUi, modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun LineChartCard(values: List<Float>, labels: List<String>, unitLabel: String) {
+    val safeValues = values.ifEmpty { List(labels.size) { 0f } }
+    val maxValue = safeValues.maxOrNull()?.coerceAtLeast(1f) ?: 1f
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .background(Color(0xFF11182B), RoundedCornerShape(18.dp))
+                .padding(14.dp)
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val chartHeight = size.height - 24.dp.toPx()
+                val chartWidth = size.width
+                val stepX = if (safeValues.size > 1) chartWidth / (safeValues.size - 1) else chartWidth
+                val path = Path()
+                val fillPath = Path()
+                safeValues.forEachIndexed { index, value ->
+                    val x = stepX * index
+                    val y = chartHeight - (value / maxValue) * chartHeight
+                    if (index == 0) {
+                        path.moveTo(x, y)
+                        fillPath.moveTo(x, chartHeight)
+                        fillPath.lineTo(x, y)
+                    } else {
+                        path.lineTo(x, y)
+                        fillPath.lineTo(x, y)
+                    }
+                    drawCircle(color = PrimaryBlue, radius = 4.dp.toPx(), center = Offset(x, y))
+                }
+                fillPath.lineTo(chartWidth, chartHeight)
+                fillPath.close()
+                drawPath(
+                    path = fillPath,
+                    brush = Brush.verticalGradient(listOf(PrimaryBlue.copy(alpha = 0.35f), Color.Transparent))
+                )
+                drawPath(path = path, color = PrimaryBlue, style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round))
+            }
+        }
+        Text(text = unitLabel, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            labels.forEach { label ->
+                Text(text = label, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BarChartCard(title: String, labels: List<String>, values: List<Float>) {
+    val safeValues = values.ifEmpty { List(labels.size.coerceAtLeast(1)) { 0f } }
+    val maxValue = safeValues.maxOrNull()?.coerceAtLeast(1f) ?: 1f
+    SurfaceCard {
+        Text(text = title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(18.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            safeValues.forEachIndexed { index, value ->
+                val barHeight = ((value / maxValue) * 150f).dp
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Bottom
+                ) {
+                    Text(text = value.toInt().toString(), color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(barHeight.coerceAtLeast(8.dp))
+                            .background(Brush.verticalGradient(listOf(Color(0xFF4B8CFF), PrimaryBlue)), RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(text = labels.getOrElse(index) { "" }, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutSummaryCard(workout: WorkoutRecord, unitSystem: UnitSystem) {
+    Column(
+        modifier = Modifier
+            .width(250.dp)
+            .background(Color(0xFF141C31), RoundedCornerShape(20.dp))
+            .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(text = workout.activityType, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            text = Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("hh:mm a")),
+            color = TextSecondary,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text(text = "${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • ${workout.caloriesKcal.toInt()} kcal", color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        Text(text = "Pace ${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)}", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+    }
+    return meters / 1_000f
+}
+
+@Composable
+private fun ReportRangeTabs(selectedRange: ReportRange, onSelected: (ReportRange) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF11182B), RoundedCornerShape(18.dp))
+            .padding(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        ReportRange.entries.forEach { range ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(
+                        if (selectedRange == range) Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen)) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent)),
+                        RoundedCornerShape(14.dp)
+                    )
+                    .clickable { onSelected(range) }
+                    .padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = range.label, color = if (selectedRange == range) Color.White else TextSecondary, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileHeader(profile: UserProfile?, unitSystem: UnitSystem) {
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .background(Brush.linearGradient(listOf(PrimaryBlue, PrimaryGreen)), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(imageVector = Icons.Outlined.PersonOutline, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp))
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(text = "Steplytics User", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(text = "member@steplytics.app", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = profile?.let { "${it.age} yrs • ${formatHeight(it.height, unitSystem)} • ${formatWeight(it.weight, unitSystem)}" }
+                    ?: "Complete your profile to personalize your metrics.",
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodySmall
+            )
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF0C5B4A), RoundedCornerShape(999.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text(text = "Premium Member", color = PrimaryGreen, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreferenceRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Color(0xFF162344), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(imageVector = icon, contentDescription = null, tint = PrimaryBlue)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text = title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(text = subtitle, color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        Text(text = "›", color = TextSecondary, style = MaterialTheme.typography.titleLarge)
+    }
+}
+
+@Composable
+private fun <T> SelectionDialog(
+    title: String,
+    message: String,
+    options: Map<T, String>,
+    selected: T?,
+    onDismiss: () -> Unit,
+    onConfirm: (T) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = message)
+                options.forEach { (value, label) ->
+                    val isSelected = selected == value
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(if (isSelected) PrimaryBlue.copy(alpha = 0.15f) else Color.Transparent, RoundedCornerShape(14.dp))
+                            .clickable { onConfirm(value) }
+                            .padding(12.dp)
+                    ) {
+                        Text(text = label, color = if (isSelected) PrimaryBlue else Color.White)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@Composable
+private fun BooleanPreferenceDialog(
+    title: String,
+    enabled: Boolean,
+    enabledLabel: String,
+    disabledLabel: String,
+    onDismiss: () -> Unit,
+    onSave: (Boolean) -> Unit
+) {
+    SelectionDialog(
+        title = title,
+        message = "Update your preference.",
+        options = linkedMapOf(true to enabledLabel, false to disabledLabel),
+        selected = enabled,
+        onDismiss = onDismiss,
+        onConfirm = onSave
+    )
+}
+
+@Composable
 private fun TrackingMetricColumn(value: String, label: String, unit: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(text = value, color = PrimaryBlue, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -1261,13 +1732,256 @@ private fun formatElapsedTime(totalSeconds: Long): String {
     return String.format(Locale.US, "%02d:%02d", minutes, seconds)
 }
 
-private fun formatPace(pacePerKm: Float): String {
+private fun distanceUnit(unitSystem: UnitSystem): String = if (unitSystem == UnitSystem.Metric) "km" else "mi"
+
+private fun paceUnit(unitSystem: UnitSystem): String = if (unitSystem == UnitSystem.Metric) "/km" else "/mi"
+
+private fun formatDistance(distanceKm: Float, unitSystem: UnitSystem): String {
+    val converted = if (unitSystem == UnitSystem.Metric) distanceKm else distanceKm * 0.621371f
+    return String.format(Locale.US, "%.1f", converted)
+}
+
+private fun formatPace(pacePerKm: Float, unitSystem: UnitSystem): String {
     if (pacePerKm <= 0f || pacePerKm.isInfinite() || pacePerKm.isNaN()) return "0:00"
-    val totalSeconds = (pacePerKm * 60).toInt()
+    val pace = if (unitSystem == UnitSystem.Metric) pacePerKm else pacePerKm / 0.621371f
+    val totalSeconds = (pace * 60).toInt()
     return String.format(Locale.US, "%d:%02d", totalSeconds / 60, totalSeconds % 60)
 }
 
 private fun formatDecimal(value: Float): String = String.format(Locale.US, "%.2f", value)
+
+private fun formatWeight(weightKg: Float, unitSystem: UnitSystem): String {
+    return if (unitSystem == UnitSystem.Metric) {
+        "${formatDecimal(weightKg)} kg"
+    } else {
+        "${formatDecimal(weightKg * 2.20462f)} lb"
+    }
+}
+
+private fun formatHeight(heightCm: Float, unitSystem: UnitSystem): String {
+    return if (unitSystem == UnitSystem.Metric) {
+        "${formatDecimal(heightCm)} cm"
+    } else {
+        val totalInches = heightCm / 2.54f
+        val feet = totalInches.toInt() / 12
+        val inches = totalInches.toInt() % 12
+        "$feet'${inches}\""
+    }
+}
+
+private fun formatCompactNumber(value: Int): String {
+    return when {
+        value >= 10000 -> String.format(Locale.US, "%.1fk", value / 1000f)
+        else -> value.toString()
+    }
+}
+
+private fun estimateSteps(distanceKm: Float): Int = (distanceKm * 1312f).toInt()
+
+private fun buildDashboardInsight(workouts: List<WorkoutRecord>, unitSystem: UnitSystem): DashboardInsight {
+    val endDate = LocalDate.now()
+    val weekDays = (6 downTo 0).map { endDate.minusDays(it.toLong()) }
+    val workoutByDay = workouts.groupBy { workoutDate(it) }
+    val weeklyProgress = weekDays.map { day ->
+        workoutByDay[day].orEmpty().sumOf { estimateSteps(it.distanceKm).toDouble() }.toFloat()
+    }
+    val hourlyProgress = MutableList(24) { 0f }
+    workouts.filter { workoutDate(it) in weekDays.first()..weekDays.last() }.forEach { workout ->
+        val hour = Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).hour
+        hourlyProgress[hour] += estimateSteps(workout.distanceKm).toFloat()
+    }
+    val recentWeek = workouts.filter { workoutDate(it) in weekDays.first()..weekDays.last() }
+    val totalDistance = recentWeek.sumOf { it.distanceKm.toDouble() }.toFloat()
+    val totalCalories = recentWeek.sumOf { it.caloriesKcal.toDouble() }.toFloat()
+    val totalSteps = recentWeek.sumOf { estimateSteps(it.distanceKm).toLong() }.toInt()
+    return DashboardInsight(
+        metrics = listOf(
+            StatCardUi("Steps", formatCompactNumber(totalSteps), "steps", Icons.Outlined.Straighten, Color(0xFF172446)),
+            StatCardUi("Calories", totalCalories.toInt().toString(), "kcal", Icons.Outlined.Whatshot, Color(0xFF112D32)),
+            StatCardUi("Distance", formatDistance(totalDistance, unitSystem), distanceUnit(unitSystem), Icons.Outlined.Timelapse, Color(0xFF2A1A3A))
+        ),
+        weeklyProgress = weeklyProgress,
+        hourlyProgress = hourlyProgress
+    )
+}
+
+private data class ReportSummary(
+    val averageSteps: Int,
+    val averageCalories: Int,
+    val totalDistanceKm: Float,
+    val activeDays: Int,
+    val periodLength: Int,
+    val stepDelta: String,
+    val calorieDelta: String,
+    val distanceDelta: String,
+    val activeDayDelta: String,
+    val labels: List<String>,
+    val values: List<Float>
+)
+
+private fun buildReportSummary(workouts: List<WorkoutRecord>, reportRange: ReportRange): ReportSummary {
+    val today = LocalDate.now()
+    val (currentDates, previousDates, labels) = when (reportRange) {
+        ReportRange.Daily -> {
+            val current = (0 until 24).map { hour -> LocalDateTime.of(today, java.time.LocalTime.of(hour, 0)) }
+            Triple(current, current.map { it.minusDays(1) }, (0 until 24).map { if (it % 4 == 0) it.toString() else "" })
+        }
+        ReportRange.Weekly -> {
+            val current = (6 downTo 0).map { today.minusDays(it.toLong()).atStartOfDay() }
+            Triple(current, current.map { it.minusWeeks(1) }, listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+        }
+        ReportRange.Monthly -> {
+            val current = (3 downTo 0).map { today.minusWeeks(it.toLong()).atStartOfDay() }
+            Triple(current, current.map { it.minusMonths(1) }, listOf("W1", "W2", "W3", "W4"))
+        }
+    }
+
+    fun workoutsForSlot(slot: LocalDateTime, range: ReportRange, source: List<WorkoutRecord>): List<WorkoutRecord> {
+        return when (range) {
+            ReportRange.Daily -> source.filter {
+                Instant.ofEpochMilli(it.startedAt).atZone(ZoneId.systemDefault()).toLocalDateTime().hour == slot.hour &&
+                    workoutDate(it) == slot.toLocalDate()
+            }
+            ReportRange.Weekly -> source.filter { workoutDate(it) == slot.toLocalDate() }
+            ReportRange.Monthly -> source.filter {
+                val date = workoutDate(it)
+                val start = slot.toLocalDate()
+                val end = start.plusDays(6)
+                date in start..end
+            }
+        }
+    }
+
+    val currentValues = currentDates.map { slot ->
+        workoutsForSlot(slot, reportRange, workouts).sumOf { estimateSteps(it.distanceKm).toDouble() }.toFloat()
+    }
+    val previousValues = previousDates.map { slot ->
+        workoutsForSlot(slot, reportRange, workouts).sumOf { estimateSteps(it.distanceKm).toDouble() }.toFloat()
+    }
+    val selectedWorkouts = when (reportRange) {
+        ReportRange.Daily -> workouts.filter { workoutDate(it) == today }
+        ReportRange.Weekly -> workouts.filter { workoutDate(it) in today.minusDays(6)..today }
+        ReportRange.Monthly -> workouts.filter { workoutDate(it) in today.minusDays(27)..today }
+    }
+    val previousWorkouts = when (reportRange) {
+        ReportRange.Daily -> workouts.filter { workoutDate(it) == today.minusDays(1) }
+        ReportRange.Weekly -> workouts.filter { workoutDate(it) in today.minusDays(13)..today.minusDays(7) }
+        ReportRange.Monthly -> workouts.filter { workoutDate(it) in today.minusDays(55)..today.minusDays(28) }
+    }
+    return ReportSummary(
+        averageSteps = selectedWorkouts.map { estimateSteps(it.distanceKm) }.average().takeIf { !it.isNaN() }?.toInt() ?: 0,
+        averageCalories = selectedWorkouts.map { it.caloriesKcal.toDouble() }.average().takeIf { !it.isNaN() }?.toInt() ?: 0,
+        totalDistanceKm = selectedWorkouts.sumOf { it.distanceKm.toDouble() }.toFloat(),
+        activeDays = selectedWorkouts.map { workoutDate(it) }.distinct().size,
+        periodLength = when (reportRange) {
+            ReportRange.Daily -> 24
+            ReportRange.Weekly -> 7
+            ReportRange.Monthly -> 4
+        },
+        stepDelta = formatChange(currentValues.sum(), previousValues.sum()),
+        calorieDelta = formatChange(
+            selectedWorkouts.sumOf { it.caloriesKcal.toDouble() }.toFloat(),
+            previousWorkouts.sumOf { it.caloriesKcal.toDouble() }.toFloat()
+        ),
+        distanceDelta = formatChange(
+            selectedWorkouts.sumOf { it.distanceKm.toDouble() }.toFloat(),
+            previousWorkouts.sumOf { it.distanceKm.toDouble() }.toFloat()
+        ),
+        activeDayDelta = formatChange(
+            selectedWorkouts.map { workoutDate(it) }.distinct().size.toFloat(),
+            previousWorkouts.map { workoutDate(it) }.distinct().size.toFloat()
+        ),
+        labels = labels,
+        values = currentValues
+    )
+}
+
+private fun formatChange(current: Float, previous: Float): String {
+    if (current == 0f && previous == 0f) return "↗ +0%"
+    if (previous == 0f) return "↗ +100%"
+    val percentage = ((current - previous) / previous) * 100f
+    val arrow = if (percentage >= 0) "↗" else "↘"
+    return "$arrow ${if (percentage >= 0) "+" else ""}${percentage.toInt()}%"
+}
+
+private fun exportWorkoutData(
+    context: android.content.Context,
+    workouts: List<WorkoutRecord>,
+    unitSystem: UnitSystem,
+    format: ExportFormat
+) {
+    if (workouts.isEmpty()) {
+        Toast.makeText(context, "No workout data available to export.", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+    val file = when (format) {
+        ExportFormat.Csv -> createWorkoutCsv(exportDir, workouts, unitSystem)
+        ExportFormat.Pdf -> createWorkoutPdf(exportDir, workouts, unitSystem)
+    }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = if (format == ExportFormat.Csv) "text/csv" else "application/pdf"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Export workout data"))
+}
+
+private fun createWorkoutCsv(directory: File, workouts: List<WorkoutRecord>, unitSystem: UnitSystem): File {
+    val file = File(directory, "steplytics-workouts.csv")
+    val content = buildString {
+        appendLine("Activity,Date,Duration,Distance (${distanceUnit(unitSystem)}),Calories,Pace (${paceUnit(unitSystem)}),AQI")
+        workouts.forEach { workout ->
+            appendLine(
+                listOf(
+                    workout.activityType,
+                    Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")),
+                    formatElapsedTime(workout.durationSeconds),
+                    formatDistance(workout.distanceKm, unitSystem),
+                    workout.caloriesKcal.toInt().toString(),
+                    formatPace(workout.pacePerKm, unitSystem),
+                    workout.avgAqi?.toString() ?: "--"
+                ).joinToString(",")
+            )
+        }
+    }
+    file.writeText(content)
+    return file
+}
+
+private fun createWorkoutPdf(directory: File, workouts: List<WorkoutRecord>, unitSystem: UnitSystem): File {
+    val file = File(directory, "steplytics-workouts.pdf")
+    val document = PdfDocument()
+    val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+    val page = document.startPage(pageInfo)
+    val canvas = page.canvas
+    val titlePaint = Paint().apply { color = android.graphics.Color.WHITE; textSize = 28f; isFakeBoldText = true }
+    val bodyPaint = Paint().apply { color = android.graphics.Color.LTGRAY; textSize = 16f }
+    canvas.drawColor(android.graphics.Color.parseColor("#10182B"))
+    canvas.drawText("Steplytics Workout Export", 36f, 48f, titlePaint)
+    var y = 84f
+    workouts.take(20).forEach { workout ->
+        canvas.drawText(
+            "${workout.activityType} • ${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • ${workout.caloriesKcal.toInt()} kcal",
+            36f,
+            y,
+            bodyPaint
+        )
+        y += 24f
+        canvas.drawText(
+            Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a")),
+            48f,
+            y,
+            bodyPaint
+        )
+        y += 28f
+    }
+    document.finishPage(page)
+    FileOutputStream(file).use { document.writeTo(it) }
+    document.close()
+    return file
+}
 
 private fun calculateDistanceKm(route: List<RoutePoint>): Float {
     if (route.size < 2) return 0f
