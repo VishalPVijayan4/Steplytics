@@ -38,10 +38,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.QueryStats
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material.icons.outlined.Timelapse
 import androidx.compose.material.icons.outlined.Whatshot
@@ -865,6 +868,7 @@ private fun WorkoutCompleteScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun CalendarScreen(
     workouts: List<WorkoutRecord>,
@@ -1050,6 +1054,7 @@ private fun ReportsScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun ProfileScreen(
     profile: UserProfile?,
@@ -1445,6 +1450,7 @@ private fun BarChartCard(title: String, labels: List<String>, values: List<Float
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun WorkoutSummaryCard(workout: WorkoutRecord, unitSystem: UnitSystem) {
     Column(
@@ -1781,6 +1787,7 @@ private fun formatCompactNumber(value: Int): String {
 
 private fun estimateSteps(distanceKm: Float): Int = (distanceKm * 1312f).toInt()
 
+@RequiresApi(Build.VERSION_CODES.O)
 private fun buildDashboardInsight(workouts: List<WorkoutRecord>, unitSystem: UnitSystem): DashboardInsight {
     val endDate = LocalDate.now()
     val weekDays = (6 downTo 0).map { endDate.minusDays(it.toLong()) }
@@ -1839,6 +1846,7 @@ private fun buildReportSummary(workouts: List<WorkoutRecord>, reportRange: Repor
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun workoutsForSlot(slot: LocalDateTime, range: ReportRange, source: List<WorkoutRecord>): List<WorkoutRecord> {
         return when (range) {
             ReportRange.Daily -> source.filter {
