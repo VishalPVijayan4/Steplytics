@@ -626,6 +626,7 @@ private fun WeeklyProgressCard(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun ChooseActivityScreen(
     selectedId: String?,
@@ -782,6 +783,7 @@ private fun TrackingScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun WorkoutCompleteScreen(
     workout: WorkoutRecord,
@@ -864,6 +866,7 @@ private fun WorkoutCompleteScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun CalendarScreen(
     workouts: List<WorkoutRecord>,
@@ -998,8 +1001,38 @@ private fun CalendarScreen(
                     WorkoutSummaryCard(workout = workout, unitSystem = unitSystem)
                 }
             }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            StatsGrid(
+                items = listOf(
+                    formatDistance(totalDistance, unitSystem) to "Distance\n${distanceUnit(unitSystem)}",
+                    formatElapsedTime(totalDuration) to "Duration\nmin",
+                    totalCalories.toInt().toString() to "Calories\nkcal",
+                    (avgAqi?.toString() ?: "--") to "AQI\navg"
+                ),
+                useFullWidth = true
+            )
         }
+
+        if (dayWorkouts.isNotEmpty()) {
+            Text(
+                text = "Workout Details",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                items(dayWorkouts, key = { it.id }) { workout ->
+                    WorkoutSummaryCard(workout = workout, unitSystem = unitSystem)
+                }
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
     }
+
+    return mapView
 }
 
 @Composable
@@ -1459,6 +1492,7 @@ private fun WorkoutSummaryCard(workout: WorkoutRecord, unitSystem: UnitSystem) {
         Text(text = "${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • ${workout.caloriesKcal.toInt()} kcal", color = Color.White, style = MaterialTheme.typography.bodyLarge)
         Text(text = "Pace ${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)}", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
     }
+    return meters / 1_000f
 }
 
 @Composable
