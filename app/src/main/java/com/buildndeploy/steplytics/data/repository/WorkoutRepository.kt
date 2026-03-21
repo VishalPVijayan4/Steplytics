@@ -28,6 +28,11 @@ private fun WorkoutEntity.toDomain() = WorkoutRecord(
     caloriesKcal = caloriesKcal,
     pacePerKm = pacePerKm,
     avgAqi = avgAqi,
+    avgPollen = avgPollen,
+    movingTimeSeconds = movingTimeSeconds,
+    stationaryTimeSeconds = stationaryTimeSeconds,
+    averageSpeedMps = averageSpeedMps,
+    maxSpeedMps = maxSpeedMps,
     route = route
 )
 
@@ -41,5 +46,10 @@ private fun WorkoutRecord.toEntity() = WorkoutEntity(
     caloriesKcal = caloriesKcal,
     pacePerKm = pacePerKm,
     avgAqi = avgAqi,
+    avgPollen = avgPollen,
+    movingTimeSeconds = movingTimeSeconds,
+    stationaryTimeSeconds = stationaryTimeSeconds,
+    averageSpeedMps = averageSpeedMps,
+    maxSpeedMps = maxSpeedMps,
     route = route
 )
