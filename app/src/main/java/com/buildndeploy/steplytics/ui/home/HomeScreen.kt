@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material.icons.outlined.Timelapse
 import androidx.compose.material.icons.outlined.Whatshot
+import android.os.Bundle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -44,12 +45,18 @@ import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -63,7 +70,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.buildndeploy.steplytics.domain.model.UserProfile
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.MapView
+import com.google.android.gms.maps.MapsInitializer
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
+import com.google.android.gms.maps.model.PolylineOptions
 import com.buildndeploy.steplytics.ui.theme.AppBackground
 import com.buildndeploy.steplytics.ui.theme.CardBackground
 import com.buildndeploy.steplytics.ui.theme.CardBorder
@@ -658,47 +673,55 @@ private fun WorkoutMapCard(
     subtitle: String,
     routePoints: List<LatLng>
 ) {
-    val cameraPositionState = rememberCameraPositionState()
-
-    LaunchedEffect(routePoints) {
-        if (routePoints.isEmpty()) return@LaunchedEffect
-        if (routePoints.size == 1) {
-            cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(routePoints.first(), 15f))
-        } else {
-            val bounds = LatLngBounds.builder().apply {
-                routePoints.forEach { include(it) }
-            }.build()
-            cameraPositionState.move(CameraUpdateFactory.newLatLngBounds(bounds, 96))
-        }
-    }
+    val context = LocalContext.current
+    val mapView = rememberMapViewWithLifecycle()
 
     SurfaceCard {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(260.dp)
+                .clip(RoundedCornerShape(20.dp))
                 .background(Color(0xFF0D1326), RoundedCornerShape(20.dp))
         ) {
-            GoogleMap(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFF0D1326), RoundedCornerShape(20.dp)),
-                cameraPositionState = cameraPositionState,
-                uiSettings = MapUiSettings(
-                    compassEnabled = false,
-                    mapToolbarEnabled = false,
-                    zoomControlsEnabled = false,
-                    myLocationButtonEnabled = false
-                )
-            ) {
-                if (routePoints.isNotEmpty()) {
-                    Polyline(
-                        points = routePoints,
-                        color = PrimaryBlue,
-                        width = 12f
-                    )
+            AndroidView(
+                factory = { mapView },
+                modifier = Modifier.fillMaxSize(),
+                update = { view ->
+                    view.getMapAsync { googleMap ->
+                        MapsInitializer.initialize(context)
+                        googleMap.uiSettings.apply {
+                            isCompassEnabled = false
+                            isMapToolbarEnabled = false
+                            isZoomControlsEnabled = false
+                            isMyLocationButtonEnabled = false
+                        }
+                        googleMap.clear()
+
+                        if (routePoints.isNotEmpty()) {
+                            googleMap.addPolyline(
+                                PolylineOptions()
+                                    .addAll(routePoints)
+                                    .color(PrimaryBlue.toArgb())
+                                    .width(12f)
+                            )
+
+                            if (routePoints.size == 1) {
+                                googleMap.moveCamera(
+                                    CameraUpdateFactory.newLatLngZoom(routePoints.first(), 15f)
+                                )
+                            } else {
+                                val bounds = LatLngBounds.builder().apply {
+                                    routePoints.forEach { include(it) }
+                                }.build()
+                                googleMap.moveCamera(
+                                    CameraUpdateFactory.newLatLngBounds(bounds, 96)
+                                )
+                            }
+                        }
+                    }
                 }
-            }
+            )
 
             Column(
                 modifier = Modifier
@@ -730,6 +753,34 @@ private fun WorkoutMapCard(
             }
         }
     }
+}
+
+@Composable
+private fun rememberMapViewWithLifecycle(): MapView {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val mapView = remember {
+        MapView(context).apply { onCreate(Bundle()) }
+    }
+
+    DisposableEffect(lifecycle, mapView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+        }
+    }
+
+    return mapView
 }
 
 @Composable

@@ -90,7 +90,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.google.play.services.auth)
     implementation(libs.google.play.services.location)
-    implementation(libs.google.maps.compose)
+    implementation(libs.google.play.services.maps)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
