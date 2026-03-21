@@ -36,6 +36,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Polyline
+import com.google.maps.android.compose.rememberCameraPositionState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -227,6 +234,7 @@ fun HomeScreen(
                         activity = session.activity,
                         elapsedSeconds = session.elapsedSeconds,
                         isPaused = session.isPaused,
+                        routePoints = buildRoutePoints(session.activity, session.elapsedSeconds),
                         metrics = calculateTrackingMetrics(session.activity, session.elapsedSeconds),
                         onPauseResume = {
                             homeFlow = session.copy(isPaused = !session.isPaused)
@@ -245,6 +253,7 @@ fun HomeScreen(
                     WorkoutCompleteScreen(
                         activity = summary.activity,
                         elapsedSeconds = summary.elapsedSeconds,
+                        routePoints = buildRoutePoints(summary.activity, summary.elapsedSeconds),
                         metrics = calculateTrackingMetrics(summary.activity, summary.elapsedSeconds),
                         showShareHint = summary.showShareHint,
                         onSave = { homeFlow = HomeFlowState.Overview },
@@ -377,6 +386,7 @@ private fun TrackingScreen(
     activity: ActivityTypeUi,
     elapsedSeconds: Int,
     isPaused: Boolean,
+    routePoints: List<LatLng>,
     metrics: TrackingMetrics,
     onPauseResume: () -> Unit,
     onStop: () -> Unit
@@ -412,9 +422,10 @@ private fun TrackingScreen(
             )
         }
 
-        MapPlaceholderCard(
+        WorkoutMapCard(
             title = "Live Route Preview",
-            subtitle = "Integrate Google Maps here to show the runner path in real time."
+            subtitle = "Route updates as the workout timer advances.",
+            routePoints = routePoints
         )
 
         SurfaceCard {
@@ -469,6 +480,7 @@ private fun TrackingScreen(
 private fun WorkoutCompleteScreen(
     activity: ActivityTypeUi,
     elapsedSeconds: Int,
+    routePoints: List<LatLng>,
     metrics: TrackingMetrics,
     showShareHint: Boolean,
     onSave: () -> Unit,
@@ -478,6 +490,7 @@ private fun WorkoutCompleteScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF202741))))
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -522,9 +535,10 @@ private fun WorkoutCompleteScreen(
             )
         }
 
-        MapPlaceholderCard(
+        WorkoutMapCard(
             title = "Route Map",
-            subtitle = "Drop a GoogleMap composable into this card to show the saved route summary."
+            subtitle = "Saved route snapshot for this workout.",
+            routePoints = routePoints
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -639,28 +653,63 @@ private fun BackHeader(onBack: () -> Unit) {
 }
 
 @Composable
-private fun MapPlaceholderCard(
+private fun WorkoutMapCard(
     title: String,
-    subtitle: String
+    subtitle: String,
+    routePoints: List<LatLng>
 ) {
+    val cameraPositionState = rememberCameraPositionState()
+
+    LaunchedEffect(routePoints) {
+        if (routePoints.isEmpty()) return@LaunchedEffect
+        if (routePoints.size == 1) {
+            cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(routePoints.first(), 15f))
+        } else {
+            val bounds = LatLngBounds.builder().apply {
+                routePoints.forEach { include(it) }
+            }.build()
+            cameraPositionState.move(CameraUpdateFactory.newLatLngBounds(bounds, 96))
+        }
+    }
+
     SurfaceCard {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(260.dp)
-                .background(Color(0xFF0D1326), RoundedCornerShape(20.dp)),
-            contentAlignment = Alignment.Center
+                .background(Color(0xFF0D1326), RoundedCornerShape(20.dp))
         ) {
+            GoogleMap(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0D1326), RoundedCornerShape(20.dp)),
+                cameraPositionState = cameraPositionState,
+                uiSettings = MapUiSettings(
+                    compassEnabled = false,
+                    mapToolbarEnabled = false,
+                    zoomControlsEnabled = false,
+                    myLocationButtonEnabled = false
+                )
+            ) {
+                if (routePoints.isNotEmpty()) {
+                    Polyline(
+                        points = routePoints,
+                        color = PrimaryBlue,
+                        width = 12f
+                    )
+                }
+            }
+
             Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.padding(20.dp)
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Box(
                     modifier = Modifier
-                        .background(Color(0xFF161F39), RoundedCornerShape(999.dp))
+                        .background(Color(0xAA161F39), RoundedCornerShape(999.dp))
                         .padding(horizontal = 12.dp, vertical = 6.dp)
-                        .align(Alignment.Start)
                 ) {
                     Text(
                         text = title,
@@ -669,15 +718,13 @@ private fun MapPlaceholderCard(
                     )
                 }
                 Text(
-                    text = "◎",
-                    color = PrimaryBlue.copy(alpha = 0.45f),
-                    fontSize = 72.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
                     text = subtitle,
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .background(Color(0xAA161F39), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     textAlign = TextAlign.Center
                 )
             }
@@ -1519,6 +1566,26 @@ private fun PreferenceList(
                 )
             }
         }
+    }
+}
+
+private fun buildRoutePoints(
+    activity: ActivityTypeUi,
+    elapsedSeconds: Int
+): List<LatLng> {
+    val pointCount = (elapsedSeconds / 3).coerceAtLeast(6)
+    val baseLat = 37.7749
+    val baseLng = -122.4194
+    val latStep = 0.00008 * activity.speedFactor
+    val lngStep = 0.00011 * activity.speedFactor
+
+    return List(pointCount) { index ->
+        val offset = index.toDouble()
+        val wave = kotlin.math.sin(offset / 2.2) * lngStep
+        LatLng(
+            baseLat + (offset * latStep),
+            baseLng + wave + (offset * lngStep * 0.22)
+        )
     }
 }
 
