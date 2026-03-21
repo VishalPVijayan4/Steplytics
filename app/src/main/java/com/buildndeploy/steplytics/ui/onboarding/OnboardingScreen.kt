@@ -68,8 +68,9 @@ fun OnboardingScreen(
     SteplyticsScaffold(modifier = modifier) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState()),
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -112,7 +113,7 @@ fun OnboardingScreen(
                 state = pagerState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(360.dp)
+                    .height(420.dp)
             ) { pageIndex ->
                 val page = state.pages[pageIndex]
                 Column(
