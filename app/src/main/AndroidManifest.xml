@@ -18,7 +18,7 @@
         android:theme="@style/Theme.Steplytics">
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyBk_0qVf28CJBphBoVX1KW2pP_7k5QAJFE" />
+            android:value="AIzaSyBKmXA-zaqOry-Id7gnssKJJOZ1eKc18eM" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
