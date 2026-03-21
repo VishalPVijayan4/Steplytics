@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.buildndeploy.steplytics.data.local.SteplyticsPreferencesDataSource
@@ -990,53 +991,6 @@ private fun CalendarScreen(
                 }
             }
         }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
-    }
-
-    return mapView
-}
-
-@Composable
-private fun ReportsScreen(
-    workouts: List<WorkoutRecord>,
-    unitSystem: UnitSystem,
-    reportRange: ReportRange,
-    onReportRangeChange: (ReportRange) -> Unit
-) {
-    val reportSummary = remember(workouts, reportRange) { buildReportSummary(workouts, reportRange) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        Text(
-            text = "Performance Reports",
-            style = MaterialTheme.typography.headlineSmall,
-            color = Color.White,
-            fontWeight = FontWeight.Bold
-        )
-
-        ReportRangeTabs(selectedRange = reportRange, onSelected = onReportRangeChange)
-
-        StatsGrid(
-            items = listOf(
-                "${reportSummary.averageSteps}" to "Avg Steps\n${reportSummary.stepDelta}",
-                "${reportSummary.averageCalories}" to "Avg Calories\n${reportSummary.calorieDelta}",
-                "${formatDistance(reportSummary.totalDistanceKm, unitSystem)} ${distanceUnit(unitSystem)}" to "Total Distance\n${reportSummary.distanceDelta}",
-                "${reportSummary.activeDays}/${reportSummary.periodLength}" to "Active Days\n${reportSummary.activeDayDelta}"
-            ),
-            useFullWidth = true
-        )
-
-        BarChartCard(
-            title = "Steps Overview",
-            labels = reportSummary.labels,
-            values = reportSummary.values
-        )
     }
 }
 
@@ -1497,7 +1451,6 @@ private fun WorkoutSummaryCard(workout: WorkoutRecord, unitSystem: UnitSystem) {
         Text(text = "${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • ${workout.caloriesKcal.toInt()} kcal", color = Color.White, style = MaterialTheme.typography.bodyLarge)
         Text(text = "Pace ${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)}", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
     }
-    return meters / 1_000f
 }
 
 @Composable
