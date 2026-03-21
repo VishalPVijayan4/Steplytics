@@ -2,11 +2,11 @@ package com.buildndeploy.steplytics.ui.home
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -55,7 +55,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.room.util.TableInfo
 import com.buildndeploy.steplytics.domain.model.UserProfile
 import com.buildndeploy.steplytics.ui.theme.AppBackground
 import com.buildndeploy.steplytics.ui.theme.CardBackground
@@ -81,6 +80,24 @@ private data class StatCardUi(
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val background: Color
 )
+
+private object CalendarUiState {
+    sealed interface Date {
+        val dayOfMonth: String
+        val isSelected: Boolean
+
+        data class Day(
+            override val dayOfMonth: String,
+            override val isSelected: Boolean = false,
+            val hasActivity: Boolean = false
+        ) : Date
+
+        data object Empty : Date {
+            override val dayOfMonth: String = ""
+            override val isSelected: Boolean = false
+        }
+    }
+}
 
 @Composable
 fun HomeScreen(
@@ -117,7 +134,7 @@ fun HomeScreen(
 
 @Composable
 private fun DashboardOverviewScreen(profile: UserProfile?) {
-    val headerName = "Welcome Back!"
+    val headerName = profile?.let { "Welcome back, ${it.age} yrs!" } ?: "Welcome Back!"
     val cards = listOf(
         StatCardUi("Steps", "0", "steps", Icons.Outlined.Straighten, Color(0xFF172446)),
         StatCardUi("Calories", "0", "kcal", Icons.Outlined.Whatshot, Color(0xFF112D32)),
@@ -170,9 +187,22 @@ private fun DashboardOverviewScreen(profile: UserProfile?) {
 
 @Composable
 private fun CalendarScreen() {
-    val highlightedDays = setOf(3, 8, 15, 22, 28)
-    val days = (1..31).toList()
-    val leadingBlanks = 3
+    val activeDays = setOf(3, 5, 8, 10, 12, 15, 17, 20, 22, 24, 28)
+    var selectedDay by remember { mutableStateOf(15) }
+    val dates = remember(selectedDay) {
+        buildList {
+            repeat(31) { index ->
+                val day = index + 1
+                add(
+                    CalendarUiState.Date.Day(
+                        dayOfMonth = day.toString(),
+                        isSelected = day == selectedDay,
+                        hasActivity = day in activeDays
+                    )
+                )
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -188,90 +218,83 @@ private fun CalendarScreen() {
             fontWeight = FontWeight.Bold
         )
 
-//        SurfaceCard {
-//            Row(
-//                modifier = Modifier.fillMaxWidth(),
-//                horizontalArrangement = Arrangement.SpaceBetween,
-//                verticalAlignment = Alignment.CenterVertically
-//            ) {
-//                CalendarArrow("‹")
-//                Text(
-//                    text = "March 2026",
-//                    color = Color.White,
-//                    style = MaterialTheme.typography.titleMedium,
-//                    fontWeight = FontWeight.Bold
-//                )
-//                CalendarArrow("›")
-//            }
-//
-//            Spacer(modifier = Modifier.height(20.dp))
-//
-//            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-//                listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").forEach { day ->
-//                    Text(
-//                        text = day,
-//                        color = TextSecondary,
-//                        style = MaterialTheme.typography.bodySmall,
-//                        modifier = Modifier.width(32.dp),
-//                        textAlign = TextAlign.Center
-//                    )
-//                }
-//            }
-//
-//            Spacer(modifier = Modifier.height(18.dp))
-//
-//            repeat(5) { week ->
-//                Row(
-//                    modifier = Modifier.fillMaxWidth(),
-//                    horizontalArrangement = Arrangement.SpaceBetween
-//                ) {
-//                    repeat(7) { dayIndex ->
-//                        val cellIndex = week * 7 + dayIndex
-//                        val dayNumber = cellIndex - leadingBlanks + 1
-//                        if (dayNumber in days) {
-//                            DayBubble(
-//                                day = dayNumber,
-//                                highlighted = dayNumber in highlightedDays,
-//                                selected = dayNumber == 15
-//                            )
-//                        } else {
-//                            Spacer(modifier = Modifier.size(36.dp))
-//                        }
-//                    }
-//                }
-//                Spacer(modifier = Modifier.height(10.dp))
-//            }
-//        }
-//
-//        SurfaceCard {
-//            Row(
-//                modifier = Modifier.fillMaxWidth(),
-//                horizontalArrangement = Arrangement.SpaceBetween,
-//                verticalAlignment = Alignment.CenterVertically
-//            ) {
-//                Text(
-//                    text = "March 15, 2026",
-//                    color = Color.White,
-//                    style = MaterialTheme.typography.titleMedium,
-//                    fontWeight = FontWeight.Bold
-//                )
-//                Text(
-//                    text = "No Activity Yet",
-//                    color = PrimaryGreen,
-//                    style = MaterialTheme.typography.bodyLarge,
-//                    fontWeight = FontWeight.SemiBold
-//                )
-//            }
-//            Spacer(modifier = Modifier.height(18.dp))
-//            StatsGrid(
-//                items = listOf(
-//                    "0" to "Steps",
-//                    "0.0 km" to "Distance",
-//                    "0 kcal" to "Calories",
-//                    "0 min" to "Duration"
-//                )
-//            )
-//        }
+        SurfaceCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CalendarArrow(symbol = "‹")
+                Text(
+                    text = "March 2026",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                CalendarArrow(symbol = "›")
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").forEach { day ->
+                    Text(
+                        text = day,
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Content(
+                dates = dates,
+                onDateClickListener = { date ->
+                    if (date is CalendarUiState.Date.Day) {
+                        selectedDay = date.dayOfMonth.toInt()
+                    }
+                }
+            )
+        }
+
+        SurfaceCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "March ${selectedDay}, 2026",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (selectedDay in activeDays) "Active Day" else "Rest Day",
+                    color = PrimaryGreen,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            StatsGrid(
+                items = listOf(
+                    "12,405" to "Steps",
+                    "8.2 km" to "Distance",
+                    "542 kcal" to "Calories",
+                    "48 min" to "Duration"
+                ),
+                useFullWidth = true
+            )
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
     }
@@ -369,66 +392,67 @@ private fun ProfileScreen(profile: UserProfile?) {
             fontWeight = FontWeight.Bold
         )
 
-//        SurfaceCard {
-//            Row(
-//                verticalAlignment = Alignment.CenterVertically,
-//                horizontalArrangement = Arrangement.spacedBy(16.dp)
-//            ) {
-//                Box(
-//                    modifier = Modifier
-//                        .size(72.dp)
-//                        .background(
-//                            brush = Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen)),
-//                            shape = CircleShape
-//                        ),
-//                    contentAlignment = Alignment.Center
-//                ) {
-//                    Icon(
-//                        imageVector = Icons.Outlined.PersonOutline,
-//                        contentDescription = null,
-//                        tint = Color.White,
-//                        modifier = Modifier.size(32.dp)
-//                    )
-//                }
-//                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-//                    Text(
-//                        text = "Steplytics User",
-//                        color = Color.White,
-//                        style = MaterialTheme.typography.titleMedium,
-//                        fontWeight = FontWeight.Bold
-//                    )
-//                    Text(
-//                        text = profile?.let { "${it.age} yrs • ${it.height} cm • ${it.weight} kg" }
-//                            ?: "Complete your first activity to unlock insights.",
-//                        color = TextSecondary,
-//                        style = MaterialTheme.typography.bodyLarge
-//                    )
-//                    Box(
-//                        modifier = Modifier
-//                            .background(Color(0xFF0D5C53), RoundedCornerShape(999.dp))
-//                            .padding(horizontal = 12.dp, vertical = 6.dp)
-//                    ) {
-//                        Text(
-//                            text = "New Member",
-//                            color = PrimaryGreen,
-//                            style = MaterialTheme.typography.bodySmall,
-//                            fontWeight = FontWeight.SemiBold
-//                        )
-//                    }
-//                }
-//            }
-//
-//            Spacer(modifier = Modifier.height(20.dp))
-//            StatsGrid(
-//                items = listOf(
-//                    "0" to "Total Workouts",
-//                    "0 km" to "Total Distance",
-//                    "0" to "Total Calories",
-//                    "0" to "Active Days"
-//                ),
-//                useFullWidth = true
-//            )
-//        }
+        SurfaceCard {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .background(
+                            brush = Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen)),
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.PersonOutline,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Steplytics User",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = profile?.let { "${it.age} yrs • ${it.height} cm • ${it.weight} kg" }
+                            ?: "Complete your first activity to unlock insights.",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFF0D5C53), RoundedCornerShape(999.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "New Member",
+                            color = PrimaryGreen,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            StatsGrid(
+                items = listOf(
+                    "0" to "Total Workouts",
+                    "0 km" to "Total Distance",
+                    "0" to "Total Calories",
+                    "0" to "Active Days"
+                ),
+                useFullWidth = true
+            )
+        }
 
         SectionTitle("Preferences")
         PreferenceList(
@@ -445,43 +469,46 @@ private fun ProfileScreen(profile: UserProfile?) {
             )
         )
 
-//        SurfaceCard {
-//            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-//                Box(
-//                    modifier = Modifier
-//                        .size(54.dp)
-//                        .background(
-//                            brush = Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen)),
-//                            shape = CircleShape
-//                        ),
-//                    contentAlignment = Alignment.Center
-//                ) {
-//                    Icon(
-//                        imageVector = Icons.Outlined.Settings,
-//                        contentDescription = null,
-//                        tint = Color.White
-//                    )
-//                }
-//                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-//                    Text(
-//                        text = "App Version",
-//                        color = Color.White,
-//                        style = MaterialTheme.typography.titleMedium,
-//                        fontWeight = FontWeight.Bold
-//                    )
-//                    Text(
-//                        text = "Steplytics v1.0.0",
-//                        color = TextSecondary,
-//                        style = MaterialTheme.typography.bodyLarge
-//                    )
-//                    Text(
-//                        text = "Last updated: March 2026",
-//                        color = TextSecondary,
-//                        style = MaterialTheme.typography.bodySmall
-//                    )
-//                }
-//            }
-//        }
+        SurfaceCard {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .background(
+                            brush = Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen)),
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Settings,
+                        contentDescription = null,
+                        tint = Color.White
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "App Version",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Steplytics v1.0.0",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Updated for the latest home experience",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
     }
@@ -567,29 +594,29 @@ private fun ChartContainer(
     trailingLabel: String? = null,
     content: @Composable () -> Unit
 ) {
-//    SurfaceCard {
-//        Row(
-//            modifier = Modifier.fillMaxWidth(),
-//            horizontalArrangement = Arrangement.SpaceBetween,
-//            verticalAlignment = Alignment.CenterVertically
-//        ) {
-//            Text(
-//                text = title,
-//                color = Color.White,
-//                style = MaterialTheme.typography.titleMedium,
-//                fontWeight = FontWeight.Bold
-//            )
-//            if (trailingLabel != null) {
-//                Text(
-//                    text = trailingLabel,
-//                    color = TextSecondary,
-//                    style = MaterialTheme.typography.bodyLarge
-//                )
-//            }
-//        }
-//        Spacer(modifier = Modifier.height(18.dp))
-//        content()
-//    }
+    SurfaceCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            if (trailingLabel != null) {
+                Text(
+                    text = trailingLabel,
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        content()
+    }
 }
 
 @Composable
@@ -739,6 +766,7 @@ private fun StatsGrid(
                         modifier = Modifier
                             .weight(1f)
                             .background(Color(0xFF141C31), RoundedCornerShape(18.dp))
+                            .border(1.dp, CardBorder, RoundedCornerShape(18.dp))
                             .padding(18.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -761,17 +789,19 @@ private fun StatsGrid(
     }
 }
 
-//@Composable
-//private fun SurfaceCard(content: @Composable TableInfo.Column.() -> Unit) {
-//    Column(
-//        modifier = Modifier
-//            .fillMaxWidth()
-//            .background(CardBackground, RoundedCornerShape(24.dp))
-//            .padding(18.dp),
-//        verticalArrangement = Arrangement.spacedBy(0.dp),
-//        content = content as @Composable (ColumnScope.() -> Unit)
-//    )
-//}
+@Composable
+private fun SurfaceCard(content: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CardBackground, RoundedCornerShape(24.dp))
+            .border(1.dp, CardBorder, RoundedCornerShape(24.dp))
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
+    ) {
+        content()
+    }
+}
 
 @Composable
 private fun CalendarArrow(symbol: String) {
@@ -786,34 +816,59 @@ private fun CalendarArrow(symbol: String) {
 }
 
 @Composable
-private fun DayBubble(
-    day: Int,
-    highlighted: Boolean,
-    selected: Boolean
+private fun Content(
+    dates: List<CalendarUiState.Date>,
+    onDateClickListener: (CalendarUiState.Date) -> Unit,
 ) {
+    Column {
+        var index = 0
+        repeat(6) {
+            if (index >= dates.size) return@repeat
+            Row {
+                repeat(7) {
+                    val item = if (index < dates.size) dates[index] else CalendarUiState.Date.Empty
+                    ContentItem(
+                        date = item,
+                        onClickListener = onDateClickListener,
+                        modifier = Modifier.weight(1f)
+                    )
+                    index++
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun ContentItem(
+    date: CalendarUiState.Date,
+    onClickListener: (CalendarUiState.Date) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hasActivity = (date as? CalendarUiState.Date.Day)?.hasActivity == true
     Box(
-        modifier = Modifier.size(36.dp),
+        modifier = modifier
+            .padding(2.dp)
+            .background(
+                color = when {
+                    date.isSelected -> MaterialTheme.colorScheme.secondaryContainer
+                    hasActivity -> PrimaryBlue.copy(alpha = 0.25f)
+                    else -> Color.Transparent
+                },
+                shape = CircleShape
+            )
+            .clickable(enabled = date !is CalendarUiState.Date.Empty) {
+                onClickListener(date)
+            }
+            .padding(vertical = 6.dp),
         contentAlignment = Alignment.Center
     ) {
-        when {
-            selected -> Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen)), CircleShape)
-            )
-
-            highlighted -> Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(PrimaryBlue.copy(alpha = 0.35f), CircleShape)
-            )
-        }
         Text(
-            text = day.toString(),
-            color = if (selected || highlighted) Color.White else TextSecondary,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.widthIn(min = 24.dp),
-            textAlign = TextAlign.Center
+            text = date.dayOfMonth,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (date.isSelected || hasActivity) Color.White else TextSecondary,
+            modifier = Modifier.padding(10.dp)
         )
     }
 }
@@ -836,6 +891,7 @@ private fun PreferenceList(
         modifier = Modifier
             .fillMaxWidth()
             .background(CardBackground, RoundedCornerShape(24.dp))
+            .border(1.dp, CardBorder, RoundedCornerShape(24.dp))
     ) {
         rows.forEachIndexed { index, (icon, title, subtitle) ->
             Row(
