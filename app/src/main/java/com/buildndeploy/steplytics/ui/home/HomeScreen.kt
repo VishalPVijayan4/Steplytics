@@ -16,7 +16,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +37,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -43,6 +48,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -70,6 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -86,6 +93,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -166,6 +174,11 @@ private data class DashboardInsight(
     val metrics: List<StatCardUi>,
     val weeklyProgress: List<Float>,
     val hourlyProgress: List<Float>
+)
+
+private data class AppInfo(
+    val versionName: String,
+    val versionCode: Long
 )
 
 private sealed interface HomeFlowState {
@@ -271,6 +284,8 @@ fun HomeScreen(
     var showUnitDialog by remember { mutableStateOf(false) }
     var showNotificationDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
+    val appInfo = remember(context) { context.resolveAppInfo() }
     val dashboardInsight = remember(workouts, unitSystem) {
         buildDashboardInsight(workouts, unitSystem)
     }
@@ -537,7 +552,9 @@ fun HomeScreen(
                             notificationsEnabled = notificationsEnabled,
                             onUnitsClick = { showUnitDialog = true },
                             onNotificationsClick = { showNotificationDialog = true },
-                            onExportClick = { showExportDialog = true }
+                            onExportClick = { showExportDialog = true },
+                            appInfo = appInfo,
+                            onAboutClick = { showAboutDialog = true }
                         )
                     }
                 }
@@ -580,7 +597,7 @@ fun HomeScreen(
     if (showExportDialog) {
         SelectionDialog(
             title = "Export Data",
-            message = "Export your workout history in a shareable format.",
+            message = "Export the current workout database in a shareable format.",
             options = ExportFormat.entries.associateWith { it.label },
             selected = null,
             onDismiss = { showExportDialog = false },
@@ -595,6 +612,13 @@ fun HomeScreen(
             }
         )
     }
+
+    if (showAboutDialog) {
+        AboutDialog(
+            appInfo = appInfo,
+            onDismiss = { showAboutDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -607,41 +631,42 @@ private fun DashboardOverviewScreen(
     onStartActivity: () -> Unit
 ) {
     val todayWorkoutsLabel = if (profile != null) "Let's crush your goals today" else "Set your pace and begin"
+    ScreenEntrance {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            Text(
+                text = "Welcome Back!",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = todayWorkoutsLabel,
+                style = MaterialTheme.typography.bodyLarge,
+                color = TextSecondary
+            )
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        Text(
-            text = "Welcome Back!",
-            style = MaterialTheme.typography.headlineSmall,
-            color = Color.White,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = todayWorkoutsLabel,
-            style = MaterialTheme.typography.bodyLarge,
-            color = TextSecondary
-        )
+            StartActivityButton(onClick = onStartActivity)
 
-        StartActivityButton(onClick = onStartActivity)
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            dashboardInsight.metrics.forEach { card ->
-                MetricCard(card = card, modifier = Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                dashboardInsight.metrics.forEach { card ->
+                    MetricCard(card = card, modifier = Modifier.weight(1f))
+                }
             }
-        }
 
-        WeeklyProgressCard(
-            unitSystem = unitSystem,
-            weeklyProgress = dashboardInsight.weeklyProgress,
-            hourlyProgress = dashboardInsight.hourlyProgress,
-            showHourlyBreakdown = showWeeklyBreakdown,
-            onClick = onToggleWeeklyBreakdown
-        )
+            WeeklyProgressCard(
+                unitSystem = unitSystem,
+                weeklyProgress = dashboardInsight.weeklyProgress,
+                hourlyProgress = dashboardInsight.hourlyProgress,
+                showHourlyBreakdown = showWeeklyBreakdown,
+                onClick = onToggleWeeklyBreakdown
+            )
+        }
     }
 }
 
@@ -695,10 +720,12 @@ private fun ChooseActivityScreen(
     onActivitySelected: (ActivityTypeUi) -> Unit,
     onStartTracking: () -> Unit
 ) {
+    ScreenEntrance {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF1A2137))))
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
@@ -733,6 +760,7 @@ private fun ChooseActivityScreen(
             onClick = onStartTracking
         )
     }
+    }
 }
 
 @Composable
@@ -752,6 +780,7 @@ private fun CountdownStartScreen(
             override fun onFinish() { latestFinished() }
         }.start()
     }
+    ScreenEntrance {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -774,6 +803,7 @@ private fun CountdownStartScreen(
         Text(text = "Get ready for ${activity.title.lowercase(Locale.getDefault())}", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(text = "Lock in your pace. Tracking starts automatically after the 5-second countdown.", color = TextSecondary, textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.weight(1f))
+    }
     }
 }
 
@@ -815,10 +845,13 @@ private fun TrackingScreen(
         }
     }
 
+    ScreenEntrance {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF1B2238))))
+            .verticalScroll(rememberScrollState())
+            .navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
@@ -840,7 +873,20 @@ private fun TrackingScreen(
             routePoints = routePoints,
             followLatestPoint = true,
             currentLocation = currentLocation,
-            markerInfo = if (isStationary) "Stationary for ${formatElapsedTime(stationaryTimeSeconds)}" else "Moving • ${String.format(Locale.US, "%.1f", currentSpeedMps * 3.6f)} km/h"
+            markerInfo = if (isStationary) "Stationary for ${formatElapsedTime(stationaryTimeSeconds)}" else "Moving • ${String.format(Locale.US, "%.1f", currentSpeedMps * 3.6f)} km/h",
+            topOverlay = {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (showAqi) MiniStatusChip(title = "AQI", value = currentAqi?.toString() ?: "--")
+                    if (showPollen) MiniStatusChip(title = "Pollen", value = currentPollen?.toString() ?: "--")
+                    MiniStatusChip(title = "Moving", value = formatElapsedTime(movingTimeSeconds))
+                    MiniStatusChip(title = "Speed", value = String.format(Locale.US, "%.1f km/h", currentSpeedMps * 3.6f))
+                }
+            }
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -881,6 +927,7 @@ private fun TrackingScreen(
             )
         }
     }
+    }
 
     if (showInactivityDialog) {
         AlertDialog(
@@ -903,6 +950,7 @@ private fun WorkoutCompleteScreen(
     onSave: () -> Unit,
     onShare: () -> Unit
 ) {
+    ScreenEntrance {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -976,6 +1024,7 @@ private fun WorkoutCompleteScreen(
             )
         }
     }
+    }
 }
 
 @RequiresApi(Build.VERSION_CODES.O)
@@ -1012,6 +1061,7 @@ private fun CalendarScreen(
     val totalDuration = dayWorkouts.sumOf { it.durationSeconds }
     val avgAqi = dayWorkouts.mapNotNull { it.avgAqi }.takeIf { it.isNotEmpty() }?.average()?.toInt()
 
+    ScreenEntrance {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1115,6 +1165,7 @@ private fun CalendarScreen(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -1126,6 +1177,7 @@ private fun ReportsScreen(
 ) {
     val reportSummary = remember(workouts, reportRange) { buildReportSummary(workouts, reportRange) }
 
+    ScreenEntrance {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1158,6 +1210,7 @@ private fun ReportsScreen(
             values = reportSummary.values
         )
     }
+    }
 }
 
 @Composable
@@ -1168,11 +1221,14 @@ private fun ProfileScreen(
     notificationsEnabled: Boolean,
     onUnitsClick: () -> Unit,
     onNotificationsClick: () -> Unit,
-    onExportClick: () -> Unit
+    onExportClick: () -> Unit,
+    appInfo: AppInfo,
+    onAboutClick: () -> Unit
 ) {
     val totalDistance = workouts.sumOf { it.distanceKm.toDouble() }.toFloat()
     val totalCalories = workouts.sumOf { it.caloriesKcal.toDouble() }.toFloat()
     val activeDays = workouts.map { workoutDate(it) }.distinct().size
+    ScreenEntrance {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1223,10 +1279,21 @@ private fun ProfileScreen(
             PreferenceRow(
                 icon = Icons.Outlined.Download,
                 title = "Export Data",
-                subtitle = "Share your workouts as PDF or Excel-friendly CSV",
+                subtitle = "Create a PDF or CSV from the current workout database",
                 onClick = onExportClick
             )
         }
+
+        Text(text = "About", color = TextSecondary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        SurfaceCard {
+            PreferenceRow(
+                icon = Icons.Outlined.Info,
+                title = "About Steplytics",
+                subtitle = "Version ${appInfo.versionName} (${appInfo.versionCode})",
+                onClick = onAboutClick
+            )
+        }
+    }
     }
 }
 
@@ -1346,7 +1413,8 @@ private fun WorkoutMapCard(
     routePoints: List<LatLng>,
     followLatestPoint: Boolean,
     currentLocation: LatLng? = routePoints.lastOrNull(),
-    markerInfo: String? = null
+    markerInfo: String? = null,
+    topOverlay: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val mapView = rememberMapViewWithLifecycle()
@@ -1355,7 +1423,7 @@ private fun WorkoutMapCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(340.dp)
+                .height(400.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(Color(0xFF0D1326), RoundedCornerShape(20.dp))
         ) {
@@ -1407,12 +1475,15 @@ private fun WorkoutMapCard(
                     .padding(14.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xAA161F39), RoundedCornerShape(999.dp))
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(text = title, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xAA161F39), RoundedCornerShape(999.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(text = title, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    topOverlay?.invoke()
                 }
                 Text(
                     text = subtitle,
@@ -1426,6 +1497,45 @@ private fun WorkoutMapCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ScreenEntrance(content: @Composable () -> Unit) {
+    val offsetY = remember { Animatable(48f) }
+    val alpha = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.coroutineScope {
+            launch { offsetY.animateTo(0f, animationSpec = tween(durationMillis = 450)) }
+            launch { alpha.animateTo(1f, animationSpec = tween(durationMillis = 350)) }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .offset(y = offsetY.value.dp)
+            .scale(0.98f + (alpha.value * 0.02f))
+    ) {
+        AnimatedVisibility(
+            visible = alpha.value > 0f,
+            enter = fadeIn(animationSpec = tween(350)) + slideInVertically(initialOffsetY = { it / 5 }, animationSpec = tween(450))
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun MiniStatusChip(title: String, value: String) {
+    Column(
+        modifier = Modifier
+            .background(Color(0xCC141C31), RoundedCornerShape(16.dp))
+            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Text(text = title, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+        Text(text = value, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -1762,6 +1872,28 @@ private fun BooleanPreferenceDialog(
 }
 
 @Composable
+private fun AboutDialog(
+    appInfo: AppInfo,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("About Steplytics") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Steplytics helps you track movement, environmental conditions, and workout performance in one place.")
+                Text("Version: ${appInfo.versionName}")
+                Text("Build: ${appInfo.versionCode}")
+                Text("Features include live route tracking, workout history, calendar insights, and PDF/CSV exports from the current local database.")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
 private fun TrackingMetricColumn(value: String, label: String, unit: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(text = value, color = PrimaryBlue, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -2056,6 +2188,14 @@ private fun formatChange(current: Float, previous: Float): String {
     return "$arrow ${if (percentage >= 0) "+" else ""}${percentage.toInt()}%"
 }
 
+private fun android.content.Context.resolveAppInfo(): AppInfo {
+    val packageInfo = packageManager.getPackageInfo(packageName, 0)
+    return AppInfo(
+        versionName = packageInfo.versionName ?: "1.0",
+        versionCode = PackageInfoCompat.getLongVersionCode(packageInfo)
+    )
+}
+
 private fun exportWorkoutData(
     context: android.content.Context,
     workouts: List<WorkoutRecord>,
@@ -2105,32 +2245,113 @@ private fun createWorkoutCsv(directory: File, workouts: List<WorkoutRecord>, uni
 private fun createWorkoutPdf(directory: File, workouts: List<WorkoutRecord>, unitSystem: UnitSystem): File {
     val file = File(directory, "steplytics-workouts.pdf")
     val document = PdfDocument()
-    val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
-    val page = document.startPage(pageInfo)
-    val canvas = page.canvas
-    val titlePaint = Paint().apply { color = android.graphics.Color.WHITE; textSize = 28f; isFakeBoldText = true }
-    val bodyPaint = Paint().apply { color = android.graphics.Color.LTGRAY; textSize = 16f }
-    canvas.drawColor(android.graphics.Color.parseColor("#10182B"))
-    canvas.drawText("Steplytics Workout Export", 36f, 48f, titlePaint)
-    var y = 84f
-    workouts.take(20).forEach { workout ->
-        canvas.drawText(
-            "${workout.activityType} • ${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • ${workout.caloriesKcal.toInt()} kcal",
-            36f,
-            y,
-            bodyPaint
-        )
-        y += 24f
-        canvas.drawText(
-            Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a")),
-            48f,
-            y,
-            bodyPaint
-        )
-        y += 28f
+    val pageWidth = 595
+    val pageHeight = 842
+    val margin = 36f
+    val titlePaint = Paint().apply { color = android.graphics.Color.WHITE; textSize = 26f; isFakeBoldText = true }
+    val headingPaint = Paint().apply { color = android.graphics.Color.WHITE; textSize = 18f; isFakeBoldText = true }
+    val bodyPaint = Paint().apply { color = android.graphics.Color.LTGRAY; textSize = 12f }
+    val dividerPaint = Paint().apply { color = android.graphics.Color.parseColor("#2E3A59"); strokeWidth = 1f }
+
+    fun PdfDocument.Page.drawWrappedText(text: String, x: Float, startY: Float, paint: Paint, lineHeight: Float): Float {
+        var y = startY
+        wrapText(text, pageWidth - (margin * 2), paint).forEach { line ->
+            canvas.drawText(line, x, y, paint)
+            y += lineHeight
+        }
+        return y
     }
+
+    var pageNumber = 1
+    var page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+    var y = margin + 8f
+
+    fun newPage() {
+        document.finishPage(page)
+        pageNumber += 1
+        page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+        y = margin + 8f
+    }
+
+    fun ensureSpace(required: Float) {
+        if (y + required > pageHeight - margin) newPage()
+    }
+
+    page.canvas.drawColor(android.graphics.Color.parseColor("#10182B"))
+    page.canvas.drawText("Steplytics Workout Database Export", margin, y, titlePaint)
+    y += 30f
+    page.canvas.drawText("Generated: ${DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(LocalDateTime.now())}", margin, y, bodyPaint)
+    y += 26f
+
+    val totalDistance = workouts.sumOf { it.distanceKm.toDouble() }.toFloat()
+    val totalCalories = workouts.sumOf { it.caloriesKcal.toDouble() }.toFloat()
+    val totalDuration = workouts.sumOf { it.durationSeconds }
+    listOf(
+        "Records: ${workouts.size}",
+        "Distance: ${formatDistance(totalDistance, unitSystem)} ${distanceUnit(unitSystem)}",
+        "Calories: ${totalCalories.toInt()} kcal",
+        "Duration: ${formatElapsedTime(totalDuration)}"
+    ).forEach { line ->
+        ensureSpace(18f)
+        page.canvas.drawText(line, margin, y, bodyPaint)
+        y += 18f
+    }
+    y += 10f
+
+    workouts.sortedByDescending { it.startedAt }.forEachIndexed { index, workout ->
+        ensureSpace(96f)
+        if (index == 0 || y < 120f) {
+            page.canvas.drawText("Workout entries", margin, y, headingPaint)
+            y += 18f
+        }
+        page.canvas.drawLine(margin, y, pageWidth - margin, y, dividerPaint)
+        y += 18f
+        page.canvas.drawText(
+            "${index + 1}. ${workout.activityType} • ${Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a"))}",
+            margin,
+            y,
+            bodyPaint
+        )
+        y += 18f
+        y = page.drawWrappedText(
+            "Distance ${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • Duration ${formatElapsedTime(workout.durationSeconds)} • Pace ${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)} • Calories ${workout.caloriesKcal.toInt()} kcal",
+            margin + 8f,
+            y,
+            bodyPaint,
+            16f
+        )
+        y = page.drawWrappedText(
+            "AQI ${workout.avgAqi ?: "--"} • Pollen ${workout.avgPollen ?: "--"} • Moving ${formatElapsedTime(workout.movingTimeSeconds)} • Idle ${formatElapsedTime(workout.stationaryTimeSeconds)} • Avg speed ${String.format(Locale.US, "%.1f", workout.averageSpeedMps * 3.6f)} km/h • Max speed ${String.format(Locale.US, "%.1f", workout.maxSpeedMps * 3.6f)} km/h",
+            margin + 8f,
+            y,
+            bodyPaint,
+            16f
+        )
+        y += 12f
+    }
+
     document.finishPage(page)
     FileOutputStream(file).use { document.writeTo(it) }
     document.close()
     return file
+}
+
+private fun wrapText(text: String, maxWidth: Float, paint: Paint): List<String> {
+    if (text.isBlank()) return listOf("")
+    val words = text.split(" ")
+    val lines = mutableListOf<String>()
+    val current = StringBuilder()
+    for (word in words) {
+        val candidate = if (current.isEmpty()) word else "${current} $word"
+        if (paint.measureText(candidate) <= maxWidth) {
+            current.clear()
+            current.append(candidate)
+        } else {
+            if (current.isNotEmpty()) lines += current.toString()
+            current.clear()
+            current.append(word)
+        }
+    }
+    if (current.isNotEmpty()) lines += current.toString()
+    return lines
 }
