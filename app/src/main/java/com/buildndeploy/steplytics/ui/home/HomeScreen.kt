@@ -1,16 +1,19 @@
 package com.buildndeploy.steplytics.ui.home
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.os.Build
+import android.os.Environment
 import android.os.Bundle
 import android.os.CountDownTimer
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -97,6 +100,7 @@ import androidx.core.content.pm.PackageInfoCompat
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.buildndeploy.steplytics.R
 import com.buildndeploy.steplytics.data.local.SteplyticsPreferencesDataSource
 import com.buildndeploy.steplytics.data.local.workout.WorkoutDatabase
 import com.buildndeploy.steplytics.data.repository.WorkoutRepository
@@ -166,8 +170,7 @@ private enum class ReportRange(val label: String) {
 }
 
 private enum class ExportFormat(val label: String) {
-    Csv("Excel (.csv)"),
-    Pdf("PDF")
+    Pdf("PDF Workout Report")
 }
 
 private data class DashboardInsight(
@@ -507,13 +510,20 @@ fun HomeScreen(
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         WorkoutCompleteScreen(
                             workout = workout,
+                            profile = profile,
                             unitSystem = unitSystem,
                             showShareHint = (homeFlow as HomeFlowState.Complete).showShareHint,
                             onSave = { homeFlow = HomeFlowState.Overview },
                             onShare = {
+                                shareWorkoutReport(
+                                    context = context,
+                                    workout = workout,
+                                    unitSystem = unitSystem,
+                                    profile = profile
+                                )
                                 val latest = homeFlow as? HomeFlowState.Complete
                                 if (latest != null) {
-                                    homeFlow = latest.copy(showShareHint = !latest.showShareHint)
+                                    homeFlow = latest.copy(showShareHint = true)
                                 }
                             }
                         )
@@ -597,17 +607,17 @@ fun HomeScreen(
     if (showExportDialog) {
         SelectionDialog(
             title = "Export Data",
-            message = "Export the current workout database in a shareable format.",
+            message = "Generate a polished PDF report for your saved workouts.",
             options = ExportFormat.entries.associateWith { it.label },
-            selected = null,
+            selected = ExportFormat.Pdf,
             onDismiss = { showExportDialog = false },
-            onConfirm = { format ->
+            onConfirm = { _ ->
                 showExportDialog = false
                 exportWorkoutData(
                     context = context,
                     workouts = workouts,
                     unitSystem = unitSystem,
-                    format = format
+                    profile = profile
                 )
             }
         )
@@ -697,8 +707,9 @@ private fun WeeklyProgressCard(
             if (showHourlyBreakdown) {
                 BarChartCard(
                     title = "24 Hour Activity",
-                    labels = (0 until 24).map { if (it % 3 == 0) it.toString().padStart(2, '0') else "" },
-                    values = hourlyProgress
+                    labels = (0 until 24).map { formatHourLabel(it) },
+                    values = hourlyProgress,
+                    enableHorizontalScroll = true
                 )
             } else {
                 LineChartCard(
@@ -827,21 +838,20 @@ private fun TrackingScreen(
     onPauseResume: () -> Unit,
     onStop: () -> Unit
 ) {
-    val context = LocalContext.current
     var showAqi by remember { mutableStateOf(true) }
     var showPollen by remember { mutableStateOf(true) }
-    var showInactivityDialog by remember { mutableStateOf(false) }
+    var showInactivityPrompt by remember { mutableStateOf(false) }
+    var inactivityAlertShown by remember { mutableStateOf(false) }
 
     LaunchedEffect(isStationary, stationaryTimeSeconds) {
-        if (isStationary && stationaryTimeSeconds >= 10) {
-            showInactivityDialog = true
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                (context.getSystemService(VibratorManager::class.java))?.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Vibrator::class.java)
-            }
-            vibrator?.vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE))
+        if (!isStationary) {
+            inactivityAlertShown = false
+            showInactivityPrompt = false
+            return@LaunchedEffect
+        }
+        if (stationaryTimeSeconds >= 10 && !inactivityAlertShown) {
+            inactivityAlertShown = true
+            showInactivityPrompt = true
         }
     }
 
@@ -910,6 +920,27 @@ private fun TrackingScreen(
             }
         }
 
+        AnimatedVisibility(visible = showInactivityPrompt) {
+            SurfaceCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Movement paused",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "You have been stationary for 10 seconds. The route marker and pace are locked until movement resumes.",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    TextButton(onClick = { showInactivityPrompt = false }) {
+                        Text("Dismiss")
+                    }
+                }
+            }
+        }
+
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             SecondaryActionButton(
                 label = if (isPaused) "Resume" else "Pause",
@@ -929,22 +960,13 @@ private fun TrackingScreen(
     }
     }
 
-    if (showInactivityDialog) {
-        AlertDialog(
-            onDismissRequest = { showInactivityDialog = false },
-            title = { Text("Tiny problem detected") },
-            text = { Text("You've been perfectly still for 10 seconds. Either you're stretching... or you became a decorative lawn statue.") },
-            confirmButton = {
-                TextButton(onClick = { showInactivityDialog = false }) { Text("I'm moving") }
-            }
-        )
-    }
 }
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun WorkoutCompleteScreen(
     workout: WorkoutRecord,
+    profile: UserProfile?,
     unitSystem: UnitSystem,
     showShareHint: Boolean,
     onSave: () -> Unit,
@@ -990,11 +1012,19 @@ private fun WorkoutCompleteScreen(
                     formatElapsedTime(workout.durationSeconds) to "Duration\nmin",
                     formatPace(workout.pacePerKm, unitSystem) to "Avg Pace\n${paceUnit(unitSystem)}",
                     workout.caloriesKcal.toInt().toString() to "Calories\nkcal",
-                    (workout.avgAqi?.toString() ?: "--") to "AQI\ncurrent",
-                    (workout.avgPollen?.toString() ?: "--") to "Pollen\ncurrent"
+                    Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd MMM yyyy")) to "Workout Date",
+                    Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("hh:mm a")) to "Start Time"
                 ),
                 useFullWidth = true
             )
+            profile?.let { user ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Profile • ${user.gender} • ${user.age} yrs • ${formatHeight(user.height, unitSystem)} • ${formatWeight(user.weight, unitSystem)}",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
         }
 
         WorkoutMapCard(
@@ -1017,7 +1047,7 @@ private fun WorkoutCompleteScreen(
 
         if (showShareHint) {
             Text(
-                text = "Saved workouts now appear in Calendar based on the workout date.",
+                text = "Your PDF workout report is ready to share with apps like WhatsApp, Instagram, Gmail, and more from the system share sheet.",
                 color = TextSecondary,
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
@@ -1207,7 +1237,8 @@ private fun ReportsScreen(
         BarChartCard(
             title = "Steps Overview",
             labels = reportSummary.labels,
-            values = reportSummary.values
+            values = reportSummary.values,
+            enableHorizontalScroll = reportRange == ReportRange.Daily
         )
     }
     }
@@ -1279,7 +1310,7 @@ private fun ProfileScreen(
             PreferenceRow(
                 icon = Icons.Outlined.Download,
                 title = "Export Data",
-                subtitle = "Create a PDF or CSV from the current workout database",
+                subtitle = "Create a branded PDF workout report from your saved workouts",
                 onClick = onExportClick
             )
         }
@@ -1418,6 +1449,7 @@ private fun WorkoutMapCard(
 ) {
     val context = LocalContext.current
     val mapView = rememberMapViewWithLifecycle()
+    var mapErrorMessage by remember { mutableStateOf<String?>(null) }
 
     SurfaceCard {
         Box(
@@ -1431,43 +1463,69 @@ private fun WorkoutMapCard(
                 factory = { mapView },
                 modifier = Modifier.fillMaxSize(),
                 update = { view ->
+                    runCatching { MapsInitializer.initialize(context) }
+                        .onFailure { mapErrorMessage = "Map preview is unavailable on this device." }
+                        .getOrNull() ?: return@AndroidView
+
                     view.getMapAsync { googleMap ->
-                        MapsInitializer.initialize(context)
-                        googleMap.uiSettings.apply {
-                            isCompassEnabled = false
-                            isMapToolbarEnabled = false
-                            isZoomControlsEnabled = false
-                            isMyLocationButtonEnabled = false
-                        }
-                        googleMap.clear()
-                        if (routePoints.isNotEmpty()) {
-                            currentLocation?.let { location ->
-                                googleMap.addMarker(
-                                    MarkerOptions()
-                                        .position(location)
-                                        .title(title)
-                                        .snippet(markerInfo ?: subtitle)
-                                        .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
-                                )?.showInfoWindow()
+                        runCatching {
+                            mapErrorMessage = null
+                            googleMap.uiSettings.apply {
+                                isCompassEnabled = false
+                                isMapToolbarEnabled = false
+                                isZoomControlsEnabled = false
+                                isMyLocationButtonEnabled = false
                             }
-                            googleMap.addPolyline(
-                                PolylineOptions()
-                                    .addAll(routePoints)
-                                    .color(PrimaryBlue.toArgb())
-                                    .width(12f)
-                            )
-                            if (followLatestPoint) {
-                                googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(routePoints.last(), 17f))
-                            } else if (routePoints.size == 1) {
-                                googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(routePoints.first(), 16f))
-                            } else {
-                                val bounds = LatLngBounds.builder().apply { routePoints.forEach { include(it) } }.build()
-                                googleMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 96))
+                            googleMap.clear()
+                            if (routePoints.isNotEmpty()) {
+                                currentLocation?.let { location ->
+                                    googleMap.addMarker(
+                                        MarkerOptions()
+                                            .position(location)
+                                            .title(title)
+                                            .snippet(markerInfo ?: subtitle)
+                                            .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                                    )?.showInfoWindow()
+                                }
+                                googleMap.addPolyline(
+                                    PolylineOptions()
+                                        .addAll(routePoints)
+                                        .color(PrimaryBlue.toArgb())
+                                        .width(12f)
+                                )
+                                if (followLatestPoint) {
+                                    googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(routePoints.last(), 17f))
+                                } else if (routePoints.size == 1) {
+                                    googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(routePoints.first(), 16f))
+                                } else {
+                                    val bounds = LatLngBounds.builder().apply { routePoints.forEach { include(it) } }.build()
+                                    googleMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 96))
+                                }
                             }
+                        }.onFailure {
+                            mapErrorMessage = "Map preview is unavailable on this device."
                         }
                     }
                 }
             )
+
+            mapErrorMessage?.let { message ->
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = 20.dp)
+                        .background(Color(0xDD161F39), RoundedCornerShape(16.dp))
+                        .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        text = message,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
 
             Column(
                 modifier = Modifier
@@ -1670,23 +1728,37 @@ private fun LineChartCard(values: List<Float>, labels: List<String>, unitLabel: 
 }
 
 @Composable
-private fun BarChartCard(title: String, labels: List<String>, values: List<Float>) {
+private fun BarChartCard(
+    title: String,
+    labels: List<String>,
+    values: List<Float>,
+    enableHorizontalScroll: Boolean = false
+) {
     val safeValues = values.ifEmpty { List(labels.size.coerceAtLeast(1)) { 0f } }
     val maxValue = safeValues.maxOrNull()?.coerceAtLeast(1f) ?: 1f
+    val barWidth = if (enableHorizontalScroll) 44.dp else 0.dp
+    val scrollState = rememberScrollState()
+
     SurfaceCard {
         Text(text = title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(18.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp),
+                .then(if (enableHorizontalScroll) Modifier.horizontalScroll(scrollState) else Modifier)
+                .height(220.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.Bottom
         ) {
             safeValues.forEachIndexed { index, value ->
-                val barHeight = ((value / maxValue) * 150f).dp
+                val animatedProgress by animateFloatAsState(
+                    targetValue = value / maxValue,
+                    animationSpec = tween(durationMillis = 650, delayMillis = index * 25),
+                    label = "bar-animation-$index"
+                )
+                val barHeight = (animatedProgress * 150f).dp
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = if (enableHorizontalScroll) Modifier.width(barWidth) else Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Bottom
                 ) {
@@ -1699,11 +1771,27 @@ private fun BarChartCard(title: String, labels: List<String>, values: List<Float
                             .background(Brush.verticalGradient(listOf(Color(0xFF4B8CFF), PrimaryBlue)), RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
                     )
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text(text = labels.getOrElse(index) { "" }, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = labels.getOrElse(index) { "" },
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1
+                    )
                 }
             }
         }
     }
+}
+
+
+private fun formatHourLabel(hour: Int): String {
+    val normalized = when {
+        hour == 0 -> 12
+        hour > 12 -> hour - 12
+        else -> hour
+    }
+    val meridiem = if (hour < 12) "AM" else "PM"
+    return "$normalized $meridiem"
 }
 
 @Composable
@@ -1884,7 +1972,7 @@ private fun AboutDialog(
                 Text("Steplytics helps you track movement, environmental conditions, and workout performance in one place.")
                 Text("Version: ${appInfo.versionName}")
                 Text("Build: ${appInfo.versionCode}")
-                Text("Features include live route tracking, workout history, calendar insights, and PDF/CSV exports from the current local database.")
+                Text("Features include live route tracking, workout history, calendar insights, and polished PDF workout reports.")
             }
         },
         confirmButton = {
@@ -2108,7 +2196,7 @@ private fun buildReportSummary(workouts: List<WorkoutRecord>, reportRange: Repor
     val (currentDates, previousDates, labels) = when (reportRange) {
         ReportRange.Daily -> {
             val current = (0 until 24).map { hour -> LocalDateTime.of(today, java.time.LocalTime.of(hour, 0)) }
-            Triple(current, current.map { it.minusDays(1) }, (0 until 24).map { if (it % 4 == 0) it.toString() else "" })
+            Triple(current, current.map { it.minusDays(1) }, (0 until 24).map(::formatHourLabel))
         }
         ReportRange.Weekly -> {
             val current = (6 downTo 0).map { today.minusDays(it.toLong()).atStartOfDay() }
@@ -2200,140 +2288,332 @@ private fun exportWorkoutData(
     context: android.content.Context,
     workouts: List<WorkoutRecord>,
     unitSystem: UnitSystem,
-    format: ExportFormat
+    profile: UserProfile?
 ) {
     if (workouts.isEmpty()) {
         Toast.makeText(context, "No workout data available to export.", Toast.LENGTH_SHORT).show()
         return
     }
-    val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-    val file = when (format) {
-        ExportFormat.Csv -> createWorkoutCsv(exportDir, workouts, unitSystem)
-        ExportFormat.Pdf -> createWorkoutPdf(exportDir, workouts, unitSystem)
+
+    runCatching {
+        val exportDir = resolveExportDirectory(context)
+        val file = createWorkoutPdf(
+            context = context,
+            directory = exportDir,
+            workouts = workouts.sortedByDescending { it.startedAt },
+            unitSystem = unitSystem,
+            profile = profile,
+            reportTitle = "Steplytics Workout Report",
+            filePrefix = "steplytics-report"
+        )
+        openGeneratedPdf(context, file)
+        file
+    }.onSuccess { file ->
+        Toast.makeText(context, "PDF report saved as ${file.name}", Toast.LENGTH_LONG).show()
+    }.onFailure { throwable ->
+        Toast.makeText(
+            context,
+            throwable.message ?: "Unable to generate the workout report right now.",
+            Toast.LENGTH_LONG
+        ).show()
     }
+}
+
+private fun shareWorkoutReport(
+    context: android.content.Context,
+    workout: WorkoutRecord,
+    unitSystem: UnitSystem,
+    profile: UserProfile?
+) {
+    runCatching {
+        val exportDir = resolveExportDirectory(context)
+        val file = createWorkoutPdf(
+            context = context,
+            directory = exportDir,
+            workouts = listOf(workout),
+            unitSystem = unitSystem,
+            profile = profile,
+            reportTitle = "${workout.activityType} Workout Report",
+            filePrefix = "steplytics-share"
+        )
+        sharePdfReport(
+            context = context,
+            file = file,
+            shareText = buildWorkoutShareText(workout, unitSystem)
+        )
+    }.onFailure { throwable ->
+        Toast.makeText(
+            context,
+            throwable.message ?: "Unable to share this workout right now.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+}
+
+private fun resolveExportDirectory(context: android.content.Context): File {
+    val preferredRoot = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
+    val exportDir = File(preferredRoot, "exports")
+    if (!exportDir.exists() && !exportDir.mkdirs()) {
+        throw IllegalStateException("Unable to prepare the export folder.")
+    }
+    return exportDir
+}
+
+private fun openGeneratedPdf(context: android.content.Context, file: File) {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = if (format == ExportFormat.Csv) "text/csv" else "application/pdf"
+    val openIntent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "application/pdf")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    val openTargets = context.packageManager.queryIntentActivities(openIntent, PackageManager.MATCH_DEFAULT_ONLY)
+    if (openTargets.isEmpty()) {
+        throw ActivityNotFoundException("Report created, but no PDF app is available to open it.")
+    }
+    context.startActivity(openIntent)
+}
+
+private fun sharePdfReport(
+    context: android.content.Context,
+    file: File,
+    shareText: String
+) {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/pdf"
         putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_SUBJECT, file.nameWithoutExtension)
+        putExtra(Intent.EXTRA_TEXT, shareText)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(Intent.createChooser(intent, "Export workout data"))
-}
-
-private fun createWorkoutCsv(directory: File, workouts: List<WorkoutRecord>, unitSystem: UnitSystem): File {
-    val file = File(directory, "steplytics-workouts.csv")
-    val content = buildString {
-        appendLine("Activity,Date,Duration,Distance (${distanceUnit(unitSystem)}),Calories,Pace (${paceUnit(unitSystem)}),AQI")
-        workouts.forEach { workout ->
-            appendLine(
-                listOf(
-                    workout.activityType,
-                    Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")),
-                    formatElapsedTime(workout.durationSeconds),
-                    formatDistance(workout.distanceKm, unitSystem),
-                    workout.caloriesKcal.toInt().toString(),
-                    formatPace(workout.pacePerKm, unitSystem),
-                    workout.avgAqi?.toString() ?: "--"
-                ).joinToString(",")
-            )
-        }
+    val targets = context.packageManager.queryIntentActivities(shareIntent, PackageManager.MATCH_DEFAULT_ONLY)
+    if (targets.isEmpty()) {
+        throw ActivityNotFoundException("No app is available to share this workout report.")
     }
-    file.writeText(content)
-    return file
+    context.startActivity(Intent.createChooser(shareIntent, "Share workout report").apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    })
 }
 
-private fun createWorkoutPdf(directory: File, workouts: List<WorkoutRecord>, unitSystem: UnitSystem): File {
-    val file = File(directory, "steplytics-workouts.pdf")
+private fun buildWorkoutShareText(workout: WorkoutRecord, unitSystem: UnitSystem): String {
+    val startedAt = Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault())
+    return buildString {
+        append("Steplytics workout summary")
+        append("\n${workout.activityType} on ${startedAt.format(DateTimeFormatter.ofPattern("dd MMM yyyy hh:mm a"))}")
+        append("\nDistance: ${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)}")
+        append("\nDuration: ${formatElapsedTime(workout.durationSeconds)}")
+        append("\nCalories: ${workout.caloriesKcal.toInt()} kcal")
+        append("\nPace: ${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)}")
+    }
+}
+
+private fun createWorkoutPdf(
+    context: android.content.Context,
+    directory: File,
+    workouts: List<WorkoutRecord>,
+    unitSystem: UnitSystem,
+    profile: UserProfile?,
+    reportTitle: String,
+    filePrefix: String
+): File {
+    val file = File(directory, "$filePrefix-${System.currentTimeMillis()}.pdf")
     val document = PdfDocument()
     val pageWidth = 595
     val pageHeight = 842
     val margin = 36f
-    val titlePaint = Paint().apply { color = android.graphics.Color.WHITE; textSize = 26f; isFakeBoldText = true }
-    val headingPaint = Paint().apply { color = android.graphics.Color.WHITE; textSize = 18f; isFakeBoldText = true }
-    val bodyPaint = Paint().apply { color = android.graphics.Color.LTGRAY; textSize = 12f }
-    val dividerPaint = Paint().apply { color = android.graphics.Color.parseColor("#2E3A59"); strokeWidth = 1f }
+    val pageBackground = android.graphics.Color.parseColor("#10182B")
+    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE; textSize = 24f; isFakeBoldText = true }
+    val headingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE; textSize = 18f; isFakeBoldText = true }
+    val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#D1D9E6"); textSize = 12f }
+    val captionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#8EA0C2"); textSize = 11f }
+    val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#2E3A59"); strokeWidth = 1f }
+    val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#151F36") }
+    val logo = BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
 
-    fun PdfDocument.Page.drawWrappedText(text: String, x: Float, startY: Float, paint: Paint, lineHeight: Float): Float {
+    fun createPage(pageNumber: Int): PdfDocument.Page {
+        return document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+    }
+
+    fun PdfDocument.Page.preparePage() {
+        canvas.drawColor(pageBackground)
+    }
+
+    fun PdfDocument.Page.drawWrappedText(text: String, x: Float, startY: Float, maxWidth: Float, paint: Paint, lineHeight: Float): Float {
         var y = startY
-        wrapText(text, pageWidth - (margin * 2), paint).forEach { line ->
+        wrapText(text, maxWidth, paint).forEach { line ->
             canvas.drawText(line, x, y, paint)
             y += lineHeight
         }
         return y
     }
 
+    fun PdfDocument.Page.drawMetricCard(left: Float, top: Float, width: Float, height: Float, label: String, value: String) {
+        val rect = RectF(left, top, left + width, top + height)
+        canvas.drawRoundRect(rect, 16f, 16f, cardPaint)
+        canvas.drawText(label, left + 14f, top + 22f, captionPaint)
+        canvas.drawText(value, left + 14f, top + 48f, headingPaint)
+    }
+
     var pageNumber = 1
-    var page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+    var page = createPage(pageNumber).also { it.preparePage() }
     var y = margin + 8f
 
-    fun newPage() {
+    fun nextPage() {
         document.finishPage(page)
         pageNumber += 1
-        page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+        page = createPage(pageNumber).also { it.preparePage() }
         y = margin + 8f
     }
 
     fun ensureSpace(required: Float) {
-        if (y + required > pageHeight - margin) newPage()
+        if (y + required > pageHeight - margin) nextPage()
     }
 
-    page.canvas.drawColor(android.graphics.Color.parseColor("#10182B"))
-    page.canvas.drawText("Steplytics Workout Database Export", margin, y, titlePaint)
-    y += 30f
-    page.canvas.drawText("Generated: ${DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(LocalDateTime.now())}", margin, y, bodyPaint)
-    y += 26f
+    logo?.let { bitmap ->
+        page.canvas.drawBitmap(Bitmap.createScaledBitmap(bitmap, 52, 52, true), margin, y, null)
+    }
+    page.canvas.drawText(reportTitle, margin + 68f, y + 24f, titlePaint)
+    page.canvas.drawText("Generated ${DateTimeFormatter.ofPattern("dd MMM yyyy hh:mm a").format(LocalDateTime.now())}", margin + 68f, y + 44f, captionPaint)
+    y += 76f
 
     val totalDistance = workouts.sumOf { it.distanceKm.toDouble() }.toFloat()
-    val totalCalories = workouts.sumOf { it.caloriesKcal.toDouble() }.toFloat()
     val totalDuration = workouts.sumOf { it.durationSeconds }
-    listOf(
-        "Records: ${workouts.size}",
-        "Distance: ${formatDistance(totalDistance, unitSystem)} ${distanceUnit(unitSystem)}",
-        "Calories: ${totalCalories.toInt()} kcal",
-        "Duration: ${formatElapsedTime(totalDuration)}"
-    ).forEach { line ->
-        ensureSpace(18f)
-        page.canvas.drawText(line, margin, y, bodyPaint)
-        y += 18f
-    }
-    y += 10f
+    val totalCalories = workouts.sumOf { it.caloriesKcal.toDouble() }.toFloat()
+    val averagePace = workouts.map { it.pacePerKm }.filter { it > 0f }.average().takeIf { !it.isNaN() }?.toFloat() ?: 0f
 
-    workouts.sortedByDescending { it.startedAt }.forEachIndexed { index, workout ->
-        ensureSpace(96f)
-        if (index == 0 || y < 120f) {
-            page.canvas.drawText("Workout entries", margin, y, headingPaint)
-            y += 18f
-        }
-        page.canvas.drawLine(margin, y, pageWidth - margin, y, dividerPaint)
-        y += 18f
-        page.canvas.drawText(
-            "${index + 1}. ${workout.activityType} • ${Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a"))}",
+    val metricWidth = (pageWidth - (margin * 2) - 12f) / 2f
+    page.drawMetricCard(margin, y, metricWidth, 58f, "Distance", "${formatDistance(totalDistance, unitSystem)} ${distanceUnit(unitSystem)}")
+    page.drawMetricCard(margin + metricWidth + 12f, y, metricWidth, 58f, "Duration", formatElapsedTime(totalDuration))
+    y += 70f
+    page.drawMetricCard(margin, y, metricWidth, 58f, "Calories", "${totalCalories.toInt()} kcal")
+    page.drawMetricCard(margin + metricWidth + 12f, y, metricWidth, 58f, "Avg pace", "${formatPace(averagePace, unitSystem)} ${paceUnit(unitSystem)}")
+    y += 78f
+
+    profile?.let { user ->
+        ensureSpace(56f)
+        page.canvas.drawText("User info", margin, y, headingPaint)
+        y += 20f
+        y = page.drawWrappedText(
+            "${user.gender} • ${user.age} yrs • ${formatHeight(user.height, unitSystem)} • ${formatWeight(user.weight, unitSystem)}",
             margin,
             y,
-            bodyPaint
+            pageWidth - (margin * 2),
+            bodyPaint,
+            16f
         )
+        y += 10f
+    }
+
+    workouts.forEachIndexed { index, workout ->
+        if (index == 0) {
+            ensureSpace(370f)
+        } else {
+            nextPage()
+        }
+
+        val startedAt = Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault())
+        page.canvas.drawText(workout.activityType, margin, y, titlePaint)
+        y += 26f
+        page.canvas.drawText(startedAt.format(DateTimeFormatter.ofPattern("dd MMM yyyy • hh:mm a")), margin, y, captionPaint)
+        y += 24f
+
+        val singleMetricWidth = (pageWidth - (margin * 2) - 24f) / 3f
+        page.drawMetricCard(margin, y, singleMetricWidth, 58f, "Distance", "${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)}")
+        page.drawMetricCard(margin + singleMetricWidth + 12f, y, singleMetricWidth, 58f, "Duration", formatElapsedTime(workout.durationSeconds))
+        page.drawMetricCard(margin + ((singleMetricWidth + 12f) * 2f), y, singleMetricWidth, 58f, "Calories", "${workout.caloriesKcal.toInt()} kcal")
+        y += 72f
+        page.drawMetricCard(margin, y, singleMetricWidth, 58f, "Pace", "${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)}")
+        page.drawMetricCard(margin + singleMetricWidth + 12f, y, singleMetricWidth, 58f, "Moving", formatElapsedTime(workout.movingTimeSeconds))
+        page.drawMetricCard(margin + ((singleMetricWidth + 12f) * 2f), y, singleMetricWidth, 58f, "Idle", formatElapsedTime(workout.stationaryTimeSeconds))
+        y += 84f
+
+        page.canvas.drawText("Route snapshot", margin, y, headingPaint)
+        y += 14f
+        val mapBitmap = createRouteSnapshotBitmap(workout)
+        val destination = RectF(margin, y, pageWidth - margin, y + 240f)
+        page.canvas.drawBitmap(mapBitmap, null, destination, null)
+        y += 258f
+
+        page.canvas.drawLine(margin, y, pageWidth - margin, y, dividerPaint)
+        y += 20f
+        page.canvas.drawText("Split stats", margin, y, headingPaint)
         y += 18f
         y = page.drawWrappedText(
-            "Distance ${formatDistance(workout.distanceKm, unitSystem)} ${distanceUnit(unitSystem)} • Duration ${formatElapsedTime(workout.durationSeconds)} • Pace ${formatPace(workout.pacePerKm, unitSystem)} ${paceUnit(unitSystem)} • Calories ${workout.caloriesKcal.toInt()} kcal",
-            margin + 8f,
+            "Average speed ${String.format(Locale.US, "%.1f", workout.averageSpeedMps * 3.6f)} km/h • Max speed ${String.format(Locale.US, "%.1f", workout.maxSpeedMps * 3.6f)} km/h • AQI ${workout.avgAqi ?: "--"} • Pollen ${workout.avgPollen ?: "--"}",
+            margin,
             y,
+            pageWidth - (margin * 2),
             bodyPaint,
             16f
         )
-        y = page.drawWrappedText(
-            "AQI ${workout.avgAqi ?: "--"} • Pollen ${workout.avgPollen ?: "--"} • Moving ${formatElapsedTime(workout.movingTimeSeconds)} • Idle ${formatElapsedTime(workout.stationaryTimeSeconds)} • Avg speed ${String.format(Locale.US, "%.1f", workout.averageSpeedMps * 3.6f)} km/h • Max speed ${String.format(Locale.US, "%.1f", workout.maxSpeedMps * 3.6f)} km/h",
-            margin + 8f,
-            y,
-            bodyPaint,
-            16f
-        )
-        y += 12f
+        y += 8f
     }
 
     document.finishPage(page)
     FileOutputStream(file).use { document.writeTo(it) }
     document.close()
     return file
+}
+
+private fun createRouteSnapshotBitmap(workout: WorkoutRecord): Bitmap {
+    val width = 1080
+    val height = 600
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = AndroidCanvas(bitmap)
+    canvas.drawColor(android.graphics.Color.parseColor("#0F172A"))
+
+    val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor("#17233D")
+        style = Paint.Style.FILL
+    }
+    val routePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor("#4B8CFF")
+        style = Paint.Style.STROKE
+        strokeWidth = 14f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.parseColor("#D1D9E6")
+        textSize = 30f
+        isFakeBoldText = true
+    }
+
+    val rect = RectF(28f, 28f, width - 28f, height - 28f)
+    canvas.drawRoundRect(rect, 28f, 28f, framePaint)
+
+    if (workout.route.size < 2) {
+        canvas.drawText("Route snapshot will appear after more GPS points are captured.", 72f, height / 2f, textPaint)
+        return bitmap
+    }
+
+    val minLat = workout.route.minOf { it.latitude }
+    val maxLat = workout.route.maxOf { it.latitude }
+    val minLng = workout.route.minOf { it.longitude }
+    val maxLng = workout.route.maxOf { it.longitude }
+    val latRange = (maxLat - minLat).takeIf { it > 0 } ?: 0.001
+    val lngRange = (maxLng - minLng).takeIf { it > 0 } ?: 0.001
+    val padding = 96f
+
+    fun project(point: RoutePoint): android.graphics.PointF {
+        val x = padding + (((point.longitude - minLng) / lngRange) * (width - (padding * 2))).toFloat()
+        val y = padding + (((maxLat - point.latitude) / latRange) * (height - (padding * 2))).toFloat()
+        return android.graphics.PointF(x, y)
+    }
+
+    val path = android.graphics.Path()
+    workout.route.map(::project).forEachIndexed { index, point ->
+        if (index == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)
+    }
+    canvas.drawPath(path, routePaint)
+
+    val start = project(workout.route.first())
+    val end = project(workout.route.last())
+    canvas.drawCircle(start.x, start.y, 16f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#7EF0C4") })
+    canvas.drawCircle(end.x, end.y, 16f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#FFFFFF") })
+    canvas.drawCircle(end.x, end.y, 7f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#0F172A") })
+    canvas.drawText("Start", start.x + 20f, start.y - 12f, textPaint)
+    canvas.drawText("Finish", end.x + 20f, end.y - 12f, textPaint)
+    return bitmap
 }
 
 private fun wrapText(text: String, maxWidth: Float, paint: Paint): List<String> {
