@@ -14,9 +14,6 @@ import android.os.Build
 import android.os.Environment
 import android.os.Bundle
 import android.os.CountDownTimer
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -841,28 +838,20 @@ private fun TrackingScreen(
     onPauseResume: () -> Unit,
     onStop: () -> Unit
 ) {
-    val context = LocalContext.current
     var showAqi by remember { mutableStateOf(true) }
     var showPollen by remember { mutableStateOf(true) }
-    var showInactivityDialog by remember { mutableStateOf(false) }
+    var showInactivityPrompt by remember { mutableStateOf(false) }
     var inactivityAlertShown by remember { mutableStateOf(false) }
 
     LaunchedEffect(isStationary, stationaryTimeSeconds) {
         if (!isStationary) {
             inactivityAlertShown = false
-            showInactivityDialog = false
+            showInactivityPrompt = false
             return@LaunchedEffect
         }
         if (stationaryTimeSeconds >= 10 && !inactivityAlertShown) {
             inactivityAlertShown = true
-            showInactivityDialog = true
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                (context.getSystemService(VibratorManager::class.java))?.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Vibrator::class.java)
-            }
-            vibrator?.vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE))
+            showInactivityPrompt = true
         }
     }
 
@@ -931,6 +920,27 @@ private fun TrackingScreen(
             }
         }
 
+        AnimatedVisibility(visible = showInactivityPrompt) {
+            SurfaceCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Movement paused",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "You have been stationary for 10 seconds. The route marker and pace are locked until movement resumes.",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    TextButton(onClick = { showInactivityPrompt = false }) {
+                        Text("Dismiss")
+                    }
+                }
+            }
+        }
+
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             SecondaryActionButton(
                 label = if (isPaused) "Resume" else "Pause",
@@ -950,16 +960,6 @@ private fun TrackingScreen(
     }
     }
 
-    if (showInactivityDialog) {
-        AlertDialog(
-            onDismissRequest = { showInactivityDialog = false },
-            title = { Text("Movement paused") },
-            text = { Text("We detected that you have been stationary for 10 seconds, so the route marker and pace are being held steady until you move again.") },
-            confirmButton = {
-                TextButton(onClick = { showInactivityDialog = false }) { Text("I'm moving") }
-            }
-        )
-    }
 }
 
 @RequiresApi(Build.VERSION_CODES.O)

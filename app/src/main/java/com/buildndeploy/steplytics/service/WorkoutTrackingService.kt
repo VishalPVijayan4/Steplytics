@@ -226,8 +226,9 @@ class WorkoutTrackingService : Service() {
     private fun buildNotification(session: ActiveTrackingSession): Notification {
         createChannel()
         val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_OPEN_TRACKING, true)
+            action = ACTION_OPEN_TRACKING
         }
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -292,6 +293,7 @@ class WorkoutTrackingService : Service() {
         private const val ACTION_PAUSE = "tracking_pause"
         private const val ACTION_RESUME = "tracking_resume"
         private const val ACTION_STOP = "tracking_stop"
+        private const val ACTION_OPEN_TRACKING = "open_tracking_screen"
 
         fun start(context: Context, activityId: String, activityTitle: String, caloriesPerMinute: Float, userWeight: Float) {
             val intent = Intent(context, WorkoutTrackingService::class.java).apply {
