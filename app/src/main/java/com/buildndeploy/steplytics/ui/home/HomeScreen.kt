@@ -1,11 +1,13 @@
 package com.buildndeploy.steplytics.ui.home
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import android.os.Build
+import android.os.Environment
 import android.os.Bundle
 import android.os.CountDownTimer
 import android.os.VibrationEffect
@@ -1418,6 +1420,7 @@ private fun WorkoutMapCard(
 ) {
     val context = LocalContext.current
     val mapView = rememberMapViewWithLifecycle()
+    var mapErrorMessage by remember { mutableStateOf<String?>(null) }
 
     SurfaceCard {
         Box(
@@ -1431,43 +1434,69 @@ private fun WorkoutMapCard(
                 factory = { mapView },
                 modifier = Modifier.fillMaxSize(),
                 update = { view ->
+                    runCatching { MapsInitializer.initialize(context) }
+                        .onFailure { mapErrorMessage = "Map preview is unavailable on this device." }
+                        .getOrNull() ?: return@AndroidView
+
                     view.getMapAsync { googleMap ->
-                        MapsInitializer.initialize(context)
-                        googleMap.uiSettings.apply {
-                            isCompassEnabled = false
-                            isMapToolbarEnabled = false
-                            isZoomControlsEnabled = false
-                            isMyLocationButtonEnabled = false
-                        }
-                        googleMap.clear()
-                        if (routePoints.isNotEmpty()) {
-                            currentLocation?.let { location ->
-                                googleMap.addMarker(
-                                    MarkerOptions()
-                                        .position(location)
-                                        .title(title)
-                                        .snippet(markerInfo ?: subtitle)
-                                        .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
-                                )?.showInfoWindow()
+                        runCatching {
+                            mapErrorMessage = null
+                            googleMap.uiSettings.apply {
+                                isCompassEnabled = false
+                                isMapToolbarEnabled = false
+                                isZoomControlsEnabled = false
+                                isMyLocationButtonEnabled = false
                             }
-                            googleMap.addPolyline(
-                                PolylineOptions()
-                                    .addAll(routePoints)
-                                    .color(PrimaryBlue.toArgb())
-                                    .width(12f)
-                            )
-                            if (followLatestPoint) {
-                                googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(routePoints.last(), 17f))
-                            } else if (routePoints.size == 1) {
-                                googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(routePoints.first(), 16f))
-                            } else {
-                                val bounds = LatLngBounds.builder().apply { routePoints.forEach { include(it) } }.build()
-                                googleMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 96))
+                            googleMap.clear()
+                            if (routePoints.isNotEmpty()) {
+                                currentLocation?.let { location ->
+                                    googleMap.addMarker(
+                                        MarkerOptions()
+                                            .position(location)
+                                            .title(title)
+                                            .snippet(markerInfo ?: subtitle)
+                                            .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                                    )?.showInfoWindow()
+                                }
+                                googleMap.addPolyline(
+                                    PolylineOptions()
+                                        .addAll(routePoints)
+                                        .color(PrimaryBlue.toArgb())
+                                        .width(12f)
+                                )
+                                if (followLatestPoint) {
+                                    googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(routePoints.last(), 17f))
+                                } else if (routePoints.size == 1) {
+                                    googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(routePoints.first(), 16f))
+                                } else {
+                                    val bounds = LatLngBounds.builder().apply { routePoints.forEach { include(it) } }.build()
+                                    googleMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 96))
+                                }
                             }
+                        }.onFailure {
+                            mapErrorMessage = "Map preview is unavailable on this device."
                         }
                     }
                 }
             )
+
+            mapErrorMessage?.let { message ->
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = 20.dp)
+                        .background(Color(0xDD161F39), RoundedCornerShape(16.dp))
+                        .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        text = message,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
 
             Column(
                 modifier = Modifier
@@ -2206,22 +2235,74 @@ private fun exportWorkoutData(
         Toast.makeText(context, "No workout data available to export.", Toast.LENGTH_SHORT).show()
         return
     }
-    val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-    val file = when (format) {
-        ExportFormat.Csv -> createWorkoutCsv(exportDir, workouts, unitSystem)
-        ExportFormat.Pdf -> createWorkoutPdf(exportDir, workouts, unitSystem)
+
+    runCatching {
+        val exportDir = resolveExportDirectory(context)
+        val file = when (format) {
+            ExportFormat.Csv -> createWorkoutCsv(exportDir, workouts, unitSystem)
+            ExportFormat.Pdf -> createWorkoutPdf(exportDir, workouts, unitSystem)
+        }
+        shareExportedFile(context, file, format)
+        file
+    }.onSuccess { file ->
+        Toast.makeText(context, "${format.label} saved to ${file.name}", Toast.LENGTH_SHORT).show()
+    }.onFailure { throwable ->
+        Toast.makeText(
+            context,
+            throwable.message ?: "Unable to export workout data right now.",
+            Toast.LENGTH_LONG
+        ).show()
     }
+}
+
+private fun resolveExportDirectory(context: android.content.Context): File {
+    val preferredRoot = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
+    val exportDir = File(preferredRoot, "exports")
+    if (!exportDir.exists() && !exportDir.mkdirs()) {
+        throw IllegalStateException("Unable to prepare the export folder.")
+    }
+    return exportDir
+}
+
+private fun shareExportedFile(
+    context: android.content.Context,
+    file: File,
+    format: ExportFormat
+) {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = if (format == ExportFormat.Csv) "text/csv" else "application/pdf"
+    val mimeType = if (format == ExportFormat.Csv) "text/csv" else "application/pdf"
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = mimeType
         putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_SUBJECT, file.name)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(Intent.createChooser(intent, "Export workout data"))
+
+    val packageManager = context.packageManager
+    val chooserIntent = Intent.createChooser(shareIntent, "Export workout data").apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    val shareTargets = packageManager.queryIntentActivities(shareIntent, PackageManager.MATCH_DEFAULT_ONLY)
+    if (shareTargets.isNotEmpty()) {
+        context.startActivity(chooserIntent)
+        return
+    }
+
+    val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    val viewTargets = packageManager.queryIntentActivities(viewIntent, PackageManager.MATCH_DEFAULT_ONLY)
+    if (viewTargets.isNotEmpty()) {
+        context.startActivity(viewIntent)
+        return
+    }
+
+    throw ActivityNotFoundException("Export created, but no compatible app was found to open or share it.")
 }
 
 private fun createWorkoutCsv(directory: File, workouts: List<WorkoutRecord>, unitSystem: UnitSystem): File {
-    val file = File(directory, "steplytics-workouts.csv")
+    val file = File(directory, "steplytics-workouts-${System.currentTimeMillis()}.csv")
     val content = buildString {
         appendLine("Activity,Date,Duration,Distance (${distanceUnit(unitSystem)}),Calories,Pace (${paceUnit(unitSystem)}),AQI")
         workouts.forEach { workout ->
@@ -2243,7 +2324,7 @@ private fun createWorkoutCsv(directory: File, workouts: List<WorkoutRecord>, uni
 }
 
 private fun createWorkoutPdf(directory: File, workouts: List<WorkoutRecord>, unitSystem: UnitSystem): File {
-    val file = File(directory, "steplytics-workouts.pdf")
+    val file = File(directory, "steplytics-workouts-${System.currentTimeMillis()}.pdf")
     val document = PdfDocument()
     val pageWidth = 595
     val pageHeight = 842

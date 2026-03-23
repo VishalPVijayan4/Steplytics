@@ -86,9 +86,9 @@ class UserSetupViewModel(
             _state.update { it.copy(isSaving = true) }
             saveUserProfileUseCase(
                 UserProfile(
-                    age = age!!,
-                    weight = weight!!,
-                    height = height!!,
+                    age = requireNotNull(age),
+                    weight = requireNotNull(weight),
+                    height = requireNotNull(height),
                     gender = currentState.gender
                 )
             )
