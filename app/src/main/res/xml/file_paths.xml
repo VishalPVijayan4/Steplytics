@@ -3,4 +3,7 @@
     <cache-path
         android:name="exports"
         android:path="exports/" />
+    <external-files-path
+        android:name="exports_external"
+        android:path="Documents/exports/" />
 </paths>
