@@ -7,6 +7,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.graphics.BitmapFactory
+import android.widget.RemoteViews
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -128,14 +130,15 @@ class WorkoutTrackingService : Service() {
                     val movingSeconds = if (session.isStationary) session.movingTimeSeconds else session.movingTimeSeconds + 1
                     val stationarySeconds = if (session.isStationary) session.stationaryTimeSeconds + 1 else 0
                     val speedFactor = max(session.currentSpeedMps / 1.4f, 0.35f)
-                    val calories = session.caloriesKcal + ((session.caloriesPerMinute / 60f) * speedFactor * (session.userWeight / 70f))
-                    val pace = if (session.distanceKm > 0f && movingSeconds > 0) (movingSeconds / 60f) / session.distanceKm else 0f
+                    val calories = if (session.isStationary) session.caloriesKcal else session.caloriesKcal + ((session.caloriesPerMinute / 60f) * speedFactor * (session.userWeight / 70f))
+                    val pace = if (!session.isStationary && session.distanceKm > 0f && movingSeconds > 0) (movingSeconds / 60f) / session.distanceKm else session.pacePerKm
                     val updated = session.copy(
                         elapsedSeconds = session.elapsedSeconds + 1,
                         caloriesKcal = calories,
                         pacePerKm = pace,
                         movingTimeSeconds = movingSeconds,
-                        stationaryTimeSeconds = stationarySeconds
+                        stationaryTimeSeconds = stationarySeconds,
+                        currentSpeedMps = if (session.isStationary) 0f else session.currentSpeedMps
                     )
                     activeSession = updated
                     TrackingSessionStore.update(updated)
@@ -178,24 +181,25 @@ class WorkoutTrackingService : Service() {
             }
             else -> 0f
         }
-        val isStationary = rawSpeed < STATIONARY_SPEED_MPS && segmentMeters < STATIONARY_DISTANCE_METERS
-        val shouldAppendRoutePoint = session.route.isEmpty() || segmentMeters >= ROUTE_APPEND_DISTANCE_METERS
+        val jitterFilteredStationary = previousLocation != null && segmentMeters < GPS_JITTER_DISTANCE_METERS && rawSpeed < STATIONARY_SPEED_MPS
+        val isStationary = rawSpeed < STATIONARY_SPEED_MPS && segmentMeters < STATIONARY_DISTANCE_METERS || jitterFilteredStationary
+        val displayPoint = if (isStationary) session.currentLocation ?: point else point
+        val shouldAppendRoutePoint = session.route.isEmpty() || (!isStationary && segmentMeters >= ROUTE_APPEND_DISTANCE_METERS)
         val updatedRoute = if (shouldAppendRoutePoint) session.route + point else session.route
         val distanceKm = calculateDistanceKm(updatedRoute)
-        val movingSeconds = if (isStationary) session.movingTimeSeconds else session.movingTimeSeconds
-        val averageSpeed = if (movingSeconds > 0 && distanceKm > 0f) (distanceKm * 1000f) / movingSeconds else session.averageSpeedMps
+        val averageSpeed = if (session.movingTimeSeconds > 0 && distanceKm > 0f) (distanceKm * 1000f) / session.movingTimeSeconds else session.averageSpeedMps
         val updated = session.copy(
             route = updatedRoute,
-            currentLocation = point,
+            currentLocation = displayPoint,
             distanceKm = distanceKm,
-            pacePerKm = if (distanceKm > 0f && session.movingTimeSeconds > 0) (session.movingTimeSeconds / 60f) / distanceKm else 0f,
+            pacePerKm = if (!isStationary && distanceKm > 0f && session.movingTimeSeconds > 0) (session.movingTimeSeconds / 60f) / distanceKm else session.pacePerKm,
             gpsEnabledMessage = if (hasLocationPermission()) "GPS locked" else "Enable GPS",
             isStationary = isStationary,
-            currentSpeedMps = rawSpeed,
+            currentSpeedMps = if (isStationary) 0f else rawSpeed,
             averageSpeedMps = averageSpeed,
-            maxSpeedMps = max(session.maxSpeedMps, rawSpeed)
+            maxSpeedMps = if (isStationary) session.maxSpeedMps else max(session.maxSpeedMps, rawSpeed)
         )
-        lastLocationSample = location
+        lastLocationSample = if (isStationary) previousLocation ?: location else location
         activeSession = updated
         TrackingSessionStore.update(updated)
         updateNotification(updated)
@@ -231,21 +235,23 @@ class WorkoutTrackingService : Service() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val contentText = buildString {
-            append(formatDistance(session.distanceKm))
-            append(" • ")
-            append(formatPace(session.pacePerKm))
-            append(" pace")
-            append(" • ")
-            append(session.caloriesKcal.toInt())
-            append(" kcal")
+        val notificationView = RemoteViews(packageName, R.layout.notification_tracking).apply {
+            setImageViewBitmap(R.id.notification_icon, BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
+            setTextViewText(R.id.notification_title, session.activityTitle)
+            setTextViewText(R.id.notification_status, if (session.isStationary) "Marker locked while stationary" else "Live workout in progress")
+            setTextViewText(R.id.notification_elapsed, formatElapsedTime(session.elapsedSeconds))
+            setTextViewText(R.id.notification_distance, formatDistance(session.distanceKm))
+            setTextViewText(R.id.notification_pace, "${formatPace(session.pacePerKm)}/km")
+            setTextViewText(R.id.notification_calories, "${session.caloriesKcal.toInt()} kcal")
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("${session.activityTitle} • ${formatElapsedTime(session.elapsedSeconds)}")
-            .setContentText(contentText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("$contentText\nTap to return to live tracking"))
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(notificationView)
+            .setCustomBigContentView(notificationView)
             .setContentIntent(pendingIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
             .build()
     }
@@ -275,6 +281,7 @@ class WorkoutTrackingService : Service() {
         private const val STATIONARY_SPEED_MPS = 0.6f
         private const val STATIONARY_DISTANCE_METERS = 2f
         private const val ROUTE_APPEND_DISTANCE_METERS = 2f
+        private const val GPS_JITTER_DISTANCE_METERS = 8f
         private const val ENVIRONMENT_REFRESH_MS = 60_000L
         const val EXTRA_OPEN_TRACKING = "open_tracking"
         private const val EXTRA_ACTIVITY_ID = "activity_id"
