@@ -7,16 +7,22 @@ sealed interface UserSetupIntent {
 }
 
 enum class UserProfileField {
+    NAME,
+    EMAIL,
     AGE,
     WEIGHT,
     HEIGHT
 }
 
 data class UserSetupState(
+    val name: String = "",
+    val email: String = "",
     val age: String = "",
     val weight: String = "",
     val height: String = "",
     val gender: String = "Male",
+    val nameError: String? = null,
+    val emailError: String? = null,
     val ageError: String? = null,
     val weightError: String? = null,
     val heightError: String? = null,
