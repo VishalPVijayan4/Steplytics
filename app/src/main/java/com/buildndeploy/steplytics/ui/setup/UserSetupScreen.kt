@@ -83,6 +83,24 @@ fun UserSetupScreen(
             }
 
             ProfileFieldCard(
+                title = "Name",
+                value = state.name,
+                placeholder = "Enter your full name",
+                supportingText = state.nameError,
+                onValueChange = { onIntent(UserSetupIntent.OnValueChanged(UserProfileField.NAME, it)) },
+                keyboardOptions = KeyboardOptions.Default
+            )
+
+            ProfileFieldCard(
+                title = "Email",
+                value = state.email,
+                placeholder = "Enter your email address",
+                supportingText = state.emailError,
+                onValueChange = { onIntent(UserSetupIntent.OnValueChanged(UserProfileField.EMAIL, it)) },
+                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = androidx.compose.ui.text.input.KeyboardType.Email)
+            )
+
+            ProfileFieldCard(
                 title = "Age",
                 value = state.age,
                 placeholder = "Enter your age",
@@ -113,6 +131,14 @@ fun UserSetupScreen(
                 selectedGender = state.gender,
                 error = state.genderError,
                 onGenderSelected = { onIntent(UserSetupIntent.OnGenderSelected(it)) }
+            )
+
+            Text(
+                text = "Privacy notice: Steplytics does not store your data on our servers. Your data stays on this device. If you uninstall the app or clear app cache/data, your information will be lost forever.",
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Start,
+                modifier = Modifier.padding(horizontal = 4.dp)
             )
 
             Button(

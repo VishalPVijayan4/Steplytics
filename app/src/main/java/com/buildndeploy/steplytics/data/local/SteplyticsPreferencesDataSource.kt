@@ -29,15 +29,26 @@ class SteplyticsPreferencesDataSource(private val context: Context) {
     }
 
     fun observeUserProfile(): Flow<UserProfile?> = context.dataStore.data.map { preferences ->
+        val name = preferences[NAME_KEY]
+        val email = preferences[EMAIL_KEY]
         val age = preferences[AGE_KEY]
         val weight = preferences[WEIGHT_KEY]
         val height = preferences[HEIGHT_KEY]
         val gender = preferences[GENDER_KEY]
 
-        if (age == null || weight == null || height == null || gender.isNullOrBlank()) {
+        if (
+            name.isNullOrBlank() ||
+            email.isNullOrBlank() ||
+            age == null ||
+            weight == null ||
+            height == null ||
+            gender.isNullOrBlank()
+        ) {
             null
         } else {
             UserProfile(
+                name = name,
+                email = email,
                 age = age,
                 weight = weight,
                 height = height,
@@ -48,6 +59,8 @@ class SteplyticsPreferencesDataSource(private val context: Context) {
 
     suspend fun saveUserProfile(profile: UserProfile) {
         context.dataStore.edit { preferences ->
+            preferences[NAME_KEY] = profile.name
+            preferences[EMAIL_KEY] = profile.email
             preferences[AGE_KEY] = profile.age
             preferences[WEIGHT_KEY] = profile.weight
             preferences[HEIGHT_KEY] = profile.height
@@ -79,6 +92,8 @@ class SteplyticsPreferencesDataSource(private val context: Context) {
 
     private companion object {
         val IS_FIRST_LAUNCH = booleanPreferencesKey("is_first_launch")
+        val NAME_KEY = stringPreferencesKey("user_name")
+        val EMAIL_KEY = stringPreferencesKey("user_email")
         val AGE_KEY = intPreferencesKey("user_age")
         val WEIGHT_KEY = floatPreferencesKey("user_weight")
         val HEIGHT_KEY = floatPreferencesKey("user_height")
