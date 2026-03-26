@@ -819,6 +819,7 @@ private fun CountdownStartScreen(
 }
 
 @Composable
+@Suppress("UNUSED_PARAMETER")
 private fun TrackingScreen(
     activity: ActivityTypeUi,
     elapsedSeconds: Long,
@@ -839,7 +840,6 @@ private fun TrackingScreen(
     onStop: () -> Unit
 ) {
     var showAqi by remember { mutableStateOf(true) }
-    var showPollen by remember { mutableStateOf(true) }
     var showInactivityPrompt by remember { mutableStateOf(false) }
     var inactivityAlertShown by remember { mutableStateOf(false) }
 
@@ -892,7 +892,6 @@ private fun TrackingScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (showAqi) MiniStatusChip(title = "AQI", value = currentAqi?.toString() ?: "--")
-                    if (showPollen) MiniStatusChip(title = "Pollen", value = currentPollen?.toString() ?: "--")
                     MiniStatusChip(title = "Moving", value = formatElapsedTime(movingTimeSeconds))
                     MiniStatusChip(title = "Speed", value = String.format(Locale.US, "%.1f km/h", currentSpeedMps * 3.6f))
                 }
@@ -907,14 +906,12 @@ private fun TrackingScreen(
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             ToggleChip(label = if (showAqi) "Hide AQI" else "Show AQI", selected = showAqi) { showAqi = !showAqi }
-            ToggleChip(label = if (showPollen) "Hide Pollen" else "Show Pollen", selected = showPollen) { showPollen = !showPollen }
         }
 
-        AnimatedVisibility(visible = showAqi || showPollen) {
+        AnimatedVisibility(visible = showAqi) {
             SurfaceCard {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (showAqi) Text(text = "AQI: ${currentAqi?.toString() ?: "--"}", color = Color.White)
-                    if (showPollen) Text(text = "Pollen: ${currentPollen?.toString() ?: "--"}", color = Color.White)
                     Text(text = "Moving time ${formatElapsedTime(movingTimeSeconds)} • Idle ${formatElapsedTime(stationaryTimeSeconds)}", color = TextSecondary)
                 }
             }
@@ -1020,7 +1017,12 @@ private fun WorkoutCompleteScreen(
             profile?.let { user ->
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Profile • ${user.gender} • ${user.age} yrs • ${formatHeight(user.height, unitSystem)} • ${formatWeight(user.weight, unitSystem)}",
+                    text = "Profile • ${user.name} • ${user.email}",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "${user.gender} • ${user.age} yrs • ${formatHeight(user.height, unitSystem)} • ${formatWeight(user.weight, unitSystem)}",
                     color = TextSecondary,
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -1854,8 +1856,8 @@ private fun ProfileHeader(profile: UserProfile?, unitSystem: UnitSystem) {
             Icon(imageVector = Icons.Outlined.PersonOutline, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp))
         }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(text = "Steplytics User", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(text = "member@steplytics.app", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+            Text(text = profile?.name ?: "Steplytics User", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(text = profile?.email ?: "member@steplytics.app", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
             Text(
                 text = profile?.let { "${it.age} yrs • ${formatHeight(it.height, unitSystem)} • ${formatWeight(it.weight, unitSystem)}" }
                     ?: "Complete your profile to personalize your metrics.",
@@ -1970,6 +1972,8 @@ private fun AboutDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Steplytics helps you track movement, environmental conditions, and workout performance in one place.")
+                Text("Your profile and workout history are stored only on this device.")
+                Text("If you uninstall Steplytics or clear app cache/data, your data will be lost forever.")
                 Text("Version: ${appInfo.versionName}")
                 Text("Build: ${appInfo.versionCode}")
                 Text("Features include live route tracking, workout history, calendar insights, and polished PDF workout reports.")
@@ -2493,7 +2497,7 @@ private fun createWorkoutPdf(
         page.canvas.drawText("User info", margin, y, headingPaint)
         y += 20f
         y = page.drawWrappedText(
-            "${user.gender} • ${user.age} yrs • ${formatHeight(user.height, unitSystem)} • ${formatWeight(user.weight, unitSystem)}",
+            "${user.name} • ${user.email} • ${user.gender} • ${user.age} yrs • ${formatHeight(user.height, unitSystem)} • ${formatWeight(user.weight, unitSystem)}",
             margin,
             y,
             pageWidth - (margin * 2),

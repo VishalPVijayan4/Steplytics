@@ -41,6 +41,8 @@ class UserSetupViewModel(
     private fun updateField(field: UserProfileField, value: String) {
         _state.update {
             when (field) {
+                UserProfileField.NAME -> it.copy(name = value, nameError = null)
+                UserProfileField.EMAIL -> it.copy(email = value.trim(), emailError = null)
                 UserProfileField.AGE -> it.copy(age = value.filter(Char::isDigit), ageError = null)
                 UserProfileField.WEIGHT -> it.copy(weight = value.filterAllowedDecimal(), weightError = null)
                 UserProfileField.HEIGHT -> it.copy(height = value.filterAllowedDecimal(), heightError = null)
@@ -50,9 +52,17 @@ class UserSetupViewModel(
 
     private fun persistProfile() {
         val currentState = _state.value
+        val name = currentState.name.trim()
+        val email = currentState.email.trim()
         val age = currentState.age.toIntOrNull()
         val weight = currentState.weight.toFloatOrNull()
         val height = currentState.height.toFloatOrNull()
+        val nameError = if (name.isBlank()) "Enter your name" else null
+        val emailError = when {
+            email.isBlank() -> "Enter your email"
+            !email.matches(Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$")) -> "Enter a valid email"
+            else -> null
+        }
         val ageError = when {
             age == null -> "Enter a valid age"
             age !in 10..120 -> "Age must be between 10 and 120"
@@ -70,9 +80,11 @@ class UserSetupViewModel(
         }
         val genderError = if (currentState.gender.isBlank()) "Select a gender" else null
 
-        if (ageError != null || weightError != null || heightError != null || genderError != null) {
+        if (nameError != null || emailError != null || ageError != null || weightError != null || heightError != null || genderError != null) {
             _state.update {
                 it.copy(
+                    nameError = nameError,
+                    emailError = emailError,
                     ageError = ageError,
                     weightError = weightError,
                     heightError = heightError,
@@ -86,6 +98,8 @@ class UserSetupViewModel(
             _state.update { it.copy(isSaving = true) }
             saveUserProfileUseCase(
                 UserProfile(
+                    name = name,
+                    email = email,
                     age = requireNotNull(age),
                     weight = requireNotNull(weight),
                     height = requireNotNull(height),
