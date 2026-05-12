@@ -8,27 +8,31 @@ plugins {
 
 android {
     namespace = "com.buildndeploy.steplytics"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.buildndeploy.steplytics"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 35
+        versionCode = 2
+        versionName = "1.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
