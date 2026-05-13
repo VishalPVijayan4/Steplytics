@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -145,52 +146,58 @@ fun UserSetupScreen(
                 onGenderSelected = { onIntent(UserSetupIntent.OnGenderSelected(it)) }
             )
 
-            Text(
-                text = "Privacy notice: Steplytics does not store your data on our servers. Your data stays on this device. If you uninstall the app or clear app cache/data, your information will be lost forever.",
-                color = TextSecondary,
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Start,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
 
-            Button(
-                onClick = { onIntent(UserSetupIntent.OnContinueClicked) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(58.dp),
-                enabled = !state.isSaving,
-                shape = RoundedCornerShape(18.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
-            ) {
-                Box(
+
+                Button(
+                    onClick = { onIntent(UserSetupIntent.OnContinueClicked) },
+                    enabled = !state.isSaving,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent
+                    ),
+                    contentPadding = PaddingValues(),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(58.dp)
                         .background(
-                            brush = Brush.horizontalGradient(listOf(PrimaryBlue, PrimaryGreen)),
+                            brush = Brush.horizontalGradient(
+                                listOf(PrimaryBlue, PrimaryGreen)
+                            ),
                             shape = RoundedCornerShape(18.dp)
                         )
-                        .padding(vertical = 16.dp),
-                    contentAlignment = Alignment.Center
                 ) {
+
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+
                         Text(
                             text = if (state.isSaving) "Saving..." else "Continue",
                             color = Color.White,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Normal
                         )
+
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
                             contentDescription = null,
                             tint = Color.White,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
-            }
+
+
+
+                Text(
+                    text = "Privacy notice: Steplytics does not store your data on our servers. Your data stays on this device. If you uninstall the app or clear app cache/data, your information will be lost forever.",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
             }
         }
     }
