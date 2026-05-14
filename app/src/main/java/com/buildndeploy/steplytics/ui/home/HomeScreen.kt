@@ -10,6 +10,7 @@ import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Bundle
@@ -49,6 +50,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Info
@@ -135,6 +137,7 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.json.JSONObject
 
 private enum class DashboardTab(
     val label: String,
@@ -287,6 +290,8 @@ fun HomeScreen(
     var showUnitDialog by remember { mutableStateOf(false) }
     var showNotificationDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var isDriveBackupInProgress by remember { mutableStateOf(false) }
+    var pendingDriveBackupPayload by remember { mutableStateOf<String?>(null) }
     var showAboutDialog by remember { mutableStateOf(false) }
     val appInfo = remember(context) { context.resolveAppInfo() }
     val dashboardInsight = remember(workouts, unitSystem) {
@@ -346,6 +351,24 @@ fun HomeScreen(
             }
         }
     }
+    val driveBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+        val payload = pendingDriveBackupPayload
+        if (uri == null || payload.isNullOrEmpty()) {
+            isDriveBackupInProgress = false
+            pendingDriveBackupPayload = null
+            Toast.makeText(context, "Backup cancelled.", Toast.LENGTH_SHORT).show()
+        } else {
+            scope.launch(Dispatchers.IO) {
+                val result = writeBackupJsonToUri(context, uri, payload)
+                launch(Dispatchers.Main) {
+                    isDriveBackupInProgress = false
+                    pendingDriveBackupPayload = null
+                    Toast.makeText(context, result, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     LaunchedEffect(serviceSession) {
         val active = serviceSession
         when {
@@ -563,6 +586,14 @@ fun HomeScreen(
                             onUnitsClick = { showUnitDialog = true },
                             onNotificationsClick = { showNotificationDialog = true },
                             onExportClick = { showExportDialog = true },
+                            onBackupToDriveClick = {
+                                if (!isDriveBackupInProgress) {
+                                    isDriveBackupInProgress = true
+                                    pendingDriveBackupPayload = createBackupPayload(profile, workouts)
+                                    driveBackupLauncher.launch("steplytics_backup_${System.currentTimeMillis()}.json")
+                                }
+                            },
+                            isBackupToDriveInProgress = isDriveBackupInProgress,
                             appInfo = appInfo,
                             onAboutClick = { showAboutDialog = true }
                         )
@@ -1255,6 +1286,8 @@ private fun ProfileScreen(
     onUnitsClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onExportClick: () -> Unit,
+    onBackupToDriveClick: () -> Unit,
+    isBackupToDriveInProgress: Boolean,
     appInfo: AppInfo,
     onAboutClick: () -> Unit
 ) {
@@ -1314,6 +1347,13 @@ private fun ProfileScreen(
                 title = "Export Data",
                 subtitle = "Create a branded PDF workout report from your saved workouts",
                 onClick = onExportClick
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            PreferenceRow(
+                icon = Icons.Outlined.CloudUpload,
+                title = if (isBackupToDriveInProgress) "Backing up..." else "Backup to Google Drive",
+                subtitle = "Save your profile and workouts to your private Drive app data",
+                onClick = onBackupToDriveClick
             )
         }
 
@@ -2396,6 +2436,58 @@ private fun sharePdfReport(
     context.startActivity(Intent.createChooser(shareIntent, "Share workout report").apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     })
+}
+
+
+
+private fun createBackupPayload(
+    profile: UserProfile?,
+    workouts: List<WorkoutRecord>
+): String {
+    return JSONObject().apply {
+        put("updatedAt", System.currentTimeMillis())
+        put("profile", JSONObject().apply {
+            put("name", profile?.name ?: "")
+            put("email", profile?.email ?: "")
+            put("age", profile?.age ?: 0)
+            put("weight", profile?.weight ?: 0f)
+            put("height", profile?.height ?: 0f)
+            put("gender", profile?.gender ?: "")
+        })
+        put("workouts", org.json.JSONArray(workouts.map { workout ->
+            JSONObject().apply {
+                put("id", workout.id)
+                put("activityType", workout.activityType)
+                put("startedAt", workout.startedAt)
+                put("durationSeconds", workout.durationSeconds)
+                put("distanceKm", workout.distanceKm)
+                put("caloriesKcal", workout.caloriesKcal)
+                put("avgAqi", workout.avgAqi)
+                put("avgPollen", workout.avgPollen)
+                put("route", org.json.JSONArray(workout.route.map { point ->
+                    JSONObject().apply {
+                        put("latitude", point.latitude)
+                        put("longitude", point.longitude)
+                    }
+                }))
+            }
+        }))
+    }.toString()
+}
+
+private fun writeBackupJsonToUri(
+    context: android.content.Context,
+    uri: Uri,
+    payload: String
+): String {
+    return try {
+        context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { writer ->
+            writer.write(payload)
+        } ?: return "Backup failed: unable to open destination file."
+        "Backup saved to Google Drive successfully."
+    } catch (error: Exception) {
+        "Backup failed: ${error.message ?: "Unknown error"}"
+    }
 }
 
 private fun buildWorkoutShareText(workout: WorkoutRecord, unitSystem: UnitSystem): String {

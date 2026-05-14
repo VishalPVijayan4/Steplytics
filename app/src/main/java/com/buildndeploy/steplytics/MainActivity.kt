@@ -90,6 +90,7 @@ private fun SteplyticsApp(
     val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
     var isAuthenticated by remember { mutableStateOf(auth.currentUser != null) }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
     val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(result.data)
         if (task.isSuccessful) {
@@ -110,13 +111,16 @@ private fun SteplyticsApp(
                             .document(user.uid)
                             .set(payload)
                     }
+                } else {
+                    Toast.makeText(context, authResult.exception?.message ?: "Google sign-in failed.", Toast.LENGTH_LONG).show()
                 }
             }
+        } else {
+            Toast.makeText(context, task.exception?.message ?: "Google sign-in was cancelled or blocked.", Toast.LENGTH_LONG).show()
         }
     }
 
     if (!isAuthenticated) {
-        val context = androidx.compose.ui.platform.LocalContext.current
         LoginScreen(onGoogleSignIn = {
             val options = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
                 com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
@@ -125,7 +129,9 @@ private fun SteplyticsApp(
                 .requestEmail()
                 .build()
             val client = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(context, options)
-            signInLauncher.launch(client.signInIntent)
+            client.revokeAccess().addOnCompleteListener {
+                signInLauncher.launch(client.signInIntent)
+            }
         }, modifier = Modifier.fillMaxSize())
         return
     }
