@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1097085706770",
+    "project_id": "steplytics",
+    "storage_bucket": "steplytics.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1097085706770:android:65c33cbc549d4a5ffc6ecb",
+        "android_client_info": {
+          "package_name": "com.buildndeploy.steplytics"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1097085706770-v3i8itrht4muu38drln8jrm8g0157je4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.buildndeploy.steplytics",
+            "certificate_hash": "64e2ee721864aff8895088eb344715584505a91e"
+          }
+        },
+        {
+          "client_id": "1097085706770-ec25rhbmq5msmueusi6pdodjf38brfqo.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDAK8IxXr2aNIJseyrWWaDPb3tWDUahF0I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1097085706770-ec25rhbmq5msmueusi6pdodjf38brfqo.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
