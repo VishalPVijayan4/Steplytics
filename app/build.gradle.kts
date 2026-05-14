@@ -95,11 +95,9 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.play.services)
-
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth.ktx)
     implementation(libs.firebase.firestore.ktx)
-
     implementation(libs.google.play.services.auth)
     implementation(libs.google.play.services.location)
     implementation(libs.google.play.services.maps)
