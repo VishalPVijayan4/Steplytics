@@ -49,6 +49,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Info
@@ -124,10 +125,14 @@ import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
+import com.google.android.gms.auth.GoogleAuthUtil
+import com.google.android.gms.auth.api.signin.GoogleSignIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -135,6 +140,7 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.json.JSONObject
 
 private enum class DashboardTab(
     val label: String,
@@ -287,6 +293,7 @@ fun HomeScreen(
     var showUnitDialog by remember { mutableStateOf(false) }
     var showNotificationDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var isDriveBackupInProgress by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     val appInfo = remember(context) { context.resolveAppInfo() }
     val dashboardInsight = remember(workouts, unitSystem) {
@@ -563,6 +570,19 @@ fun HomeScreen(
                             onUnitsClick = { showUnitDialog = true },
                             onNotificationsClick = { showNotificationDialog = true },
                             onExportClick = { showExportDialog = true },
+                            onBackupToDriveClick = {
+                                if (!isDriveBackupInProgress) {
+                                    isDriveBackupInProgress = true
+                                    scope.launch(Dispatchers.IO) {
+                                        val result = backupDataToGoogleDrive(context, profile, workouts)
+                                        launch(Dispatchers.Main) {
+                                            isDriveBackupInProgress = false
+                                            Toast.makeText(context, result, Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                            },
+                            isBackupToDriveInProgress = isDriveBackupInProgress,
                             appInfo = appInfo,
                             onAboutClick = { showAboutDialog = true }
                         )
@@ -1255,6 +1275,8 @@ private fun ProfileScreen(
     onUnitsClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onExportClick: () -> Unit,
+    onBackupToDriveClick: () -> Unit,
+    isBackupToDriveInProgress: Boolean,
     appInfo: AppInfo,
     onAboutClick: () -> Unit
 ) {
@@ -1314,6 +1336,13 @@ private fun ProfileScreen(
                 title = "Export Data",
                 subtitle = "Create a branded PDF workout report from your saved workouts",
                 onClick = onExportClick
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            PreferenceRow(
+                icon = Icons.Outlined.CloudUpload,
+                title = if (isBackupToDriveInProgress) "Backing up..." else "Backup to Google Drive",
+                subtitle = "Save your profile and workouts to your private Drive app data",
+                onClick = onBackupToDriveClick
             )
         }
 
@@ -2398,6 +2427,86 @@ private fun sharePdfReport(
     })
 }
 
+
+
+private fun backupDataToGoogleDrive(
+    context: android.content.Context,
+    profile: UserProfile?,
+    workouts: List<WorkoutRecord>
+): String {
+    return try {
+        val account = GoogleSignIn.getLastSignedInAccount(context) ?: return "Sign in with Google first to backup data."
+        val googleAccount = account.account ?: return "Google account not available."
+        val token = GoogleAuthUtil.getToken(context, googleAccount, "oauth2:https://www.googleapis.com/auth/drive.appdata")
+
+        val payload = JSONObject().apply {
+            put("updatedAt", System.currentTimeMillis())
+            put("profile", JSONObject().apply {
+                put("name", profile?.name ?: "")
+                put("email", profile?.email ?: "")
+                put("age", profile?.age ?: 0)
+                put("weight", profile?.weight ?: 0f)
+                put("height", profile?.height ?: 0f)
+                put("gender", profile?.gender ?: "")
+            })
+            put("workouts", org.json.JSONArray(workouts.map { workout ->
+                JSONObject().apply {
+                    put("id", workout.id)
+                    put("activityType", workout.activityType)
+                    put("startedAt", workout.startedAt)
+                    put("durationSeconds", workout.durationSeconds)
+                    put("distanceKm", workout.distanceKm)
+                    put("caloriesKcal", workout.caloriesKcal)
+                    put("avgAqi", workout.avgAqi)
+                    put("avgPollen", workout.avgPollen)
+                    put("route", org.json.JSONArray(workout.route.map { point ->
+                        JSONObject().apply {
+                            put("latitude", point.latitude)
+                            put("longitude", point.longitude)
+                        }
+                    }))
+                }
+            }))
+        }.toString()
+
+        uploadDriveAppData(token, payload)
+        "Backup saved to Google Drive successfully."
+    } catch (error: Exception) {
+        "Backup failed: ${error.message ?: "Unknown error"}"
+    }
+}
+
+private fun uploadDriveAppData(accessToken: String, payload: String) {
+    val metadata = JSONObject().apply {
+        put("name", "steplytics_backup.json")
+        put("parents", org.json.JSONArray().put("appDataFolder"))
+    }.toString()
+
+    val boundary = "boundary_${System.currentTimeMillis()}"
+    val body = buildString {
+        append("--$boundary\r\n")
+        append("Content-Type: application/json; charset=UTF-8\r\n\r\n")
+        append(metadata)
+        append("\r\n--$boundary\r\n")
+        append("Content-Type: application/json\r\n\r\n")
+        append(payload)
+        append("\r\n--$boundary--\r\n")
+    }.toByteArray()
+
+    val connection = (URL("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart").openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        doOutput = true
+        setRequestProperty("Authorization", "Bearer $accessToken")
+        setRequestProperty("Content-Type", "multipart/related; boundary=$boundary")
+    }
+
+    connection.outputStream.use { it.write(body) }
+    val code = connection.responseCode
+    if (code !in 200..299) {
+        val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
+        throw IllegalStateException(errorText)
+    }
+}
 private fun buildWorkoutShareText(workout: WorkoutRecord, unitSystem: UnitSystem): String {
     val startedAt = Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault())
     return buildString {
