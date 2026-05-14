@@ -8,10 +8,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="com.buildndeploy.steplytics" />
+                  <option name="mobileSdkAppId" value="1:1097085706770:android:65c33cbc549d4a5ffc6ecb" />
+                  <option name="projectId" value="steplytics" />
+                  <option name="projectNumber" value="1097085706770" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />
