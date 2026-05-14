@@ -10,6 +10,7 @@ import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Bundle
@@ -294,6 +295,7 @@ fun HomeScreen(
     var showNotificationDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var isDriveBackupInProgress by remember { mutableStateOf(false) }
+    var pendingDriveBackupPayload by remember { mutableStateOf<String?>(null) }
     var showAboutDialog by remember { mutableStateOf(false) }
     val appInfo = remember(context) { context.resolveAppInfo() }
     val dashboardInsight = remember(workouts, unitSystem) {
@@ -353,6 +355,24 @@ fun HomeScreen(
             }
         }
     }
+    val driveBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+        val payload = pendingDriveBackupPayload
+        if (uri == null || payload.isNullOrEmpty()) {
+            isDriveBackupInProgress = false
+            pendingDriveBackupPayload = null
+            Toast.makeText(context, "Backup cancelled.", Toast.LENGTH_SHORT).show()
+        } else {
+            scope.launch(Dispatchers.IO) {
+                val result = writeBackupJsonToUri(context, uri, payload)
+                launch(Dispatchers.Main) {
+                    isDriveBackupInProgress = false
+                    pendingDriveBackupPayload = null
+                    Toast.makeText(context, result, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     LaunchedEffect(serviceSession) {
         val active = serviceSession
         when {
@@ -573,13 +593,8 @@ fun HomeScreen(
                             onBackupToDriveClick = {
                                 if (!isDriveBackupInProgress) {
                                     isDriveBackupInProgress = true
-                                    scope.launch(Dispatchers.IO) {
-                                        val result = backupDataToGoogleDrive(context, profile, workouts)
-                                        launch(Dispatchers.Main) {
-                                            isDriveBackupInProgress = false
-                                            Toast.makeText(context, result, Toast.LENGTH_LONG).show()
-                                        }
-                                    }
+                                    pendingDriveBackupPayload = createBackupPayload(profile, workouts)
+                                    driveBackupLauncher.launch("steplytics_backup_${System.currentTimeMillis()}.json")
                                 }
                             },
                             isBackupToDriveInProgress = isDriveBackupInProgress,
@@ -2429,84 +2444,56 @@ private fun sharePdfReport(
 
 
 
-private fun backupDataToGoogleDrive(
-    context: android.content.Context,
+private fun createBackupPayload(
     profile: UserProfile?,
     workouts: List<WorkoutRecord>
 ): String {
+    return JSONObject().apply {
+        put("updatedAt", System.currentTimeMillis())
+        put("profile", JSONObject().apply {
+            put("name", profile?.name ?: "")
+            put("email", profile?.email ?: "")
+            put("age", profile?.age ?: 0)
+            put("weight", profile?.weight ?: 0f)
+            put("height", profile?.height ?: 0f)
+            put("gender", profile?.gender ?: "")
+        })
+        put("workouts", org.json.JSONArray(workouts.map { workout ->
+            JSONObject().apply {
+                put("id", workout.id)
+                put("activityType", workout.activityType)
+                put("startedAt", workout.startedAt)
+                put("durationSeconds", workout.durationSeconds)
+                put("distanceKm", workout.distanceKm)
+                put("caloriesKcal", workout.caloriesKcal)
+                put("avgAqi", workout.avgAqi)
+                put("avgPollen", workout.avgPollen)
+                put("route", org.json.JSONArray(workout.route.map { point ->
+                    JSONObject().apply {
+                        put("latitude", point.latitude)
+                        put("longitude", point.longitude)
+                    }
+                }))
+            }
+        }))
+    }.toString()
+}
+
+private fun writeBackupJsonToUri(
+    context: android.content.Context,
+    uri: Uri,
+    payload: String
+): String {
     return try {
-        val account = GoogleSignIn.getLastSignedInAccount(context) ?: return "Sign in with Google first to backup data."
-        val googleAccount = account.account ?: return "Google account not available."
-        val token = GoogleAuthUtil.getToken(context, googleAccount, "oauth2:https://www.googleapis.com/auth/drive.appdata")
-
-        val payload = JSONObject().apply {
-            put("updatedAt", System.currentTimeMillis())
-            put("profile", JSONObject().apply {
-                put("name", profile?.name ?: "")
-                put("email", profile?.email ?: "")
-                put("age", profile?.age ?: 0)
-                put("weight", profile?.weight ?: 0f)
-                put("height", profile?.height ?: 0f)
-                put("gender", profile?.gender ?: "")
-            })
-            put("workouts", org.json.JSONArray(workouts.map { workout ->
-                JSONObject().apply {
-                    put("id", workout.id)
-                    put("activityType", workout.activityType)
-                    put("startedAt", workout.startedAt)
-                    put("durationSeconds", workout.durationSeconds)
-                    put("distanceKm", workout.distanceKm)
-                    put("caloriesKcal", workout.caloriesKcal)
-                    put("avgAqi", workout.avgAqi)
-                    put("avgPollen", workout.avgPollen)
-                    put("route", org.json.JSONArray(workout.route.map { point ->
-                        JSONObject().apply {
-                            put("latitude", point.latitude)
-                            put("longitude", point.longitude)
-                        }
-                    }))
-                }
-            }))
-        }.toString()
-
-        uploadDriveAppData(token, payload)
+        context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { writer ->
+            writer.write(payload)
+        } ?: return "Backup failed: unable to open destination file."
         "Backup saved to Google Drive successfully."
     } catch (error: Exception) {
         "Backup failed: ${error.message ?: "Unknown error"}"
     }
 }
 
-private fun uploadDriveAppData(accessToken: String, payload: String) {
-    val metadata = JSONObject().apply {
-        put("name", "steplytics_backup.json")
-        put("parents", org.json.JSONArray().put("appDataFolder"))
-    }.toString()
-
-    val boundary = "boundary_${System.currentTimeMillis()}"
-    val body = buildString {
-        append("--$boundary\r\n")
-        append("Content-Type: application/json; charset=UTF-8\r\n\r\n")
-        append(metadata)
-        append("\r\n--$boundary\r\n")
-        append("Content-Type: application/json\r\n\r\n")
-        append(payload)
-        append("\r\n--$boundary--\r\n")
-    }.toByteArray()
-
-    val connection = (URL("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart").openConnection() as HttpURLConnection).apply {
-        requestMethod = "POST"
-        doOutput = true
-        setRequestProperty("Authorization", "Bearer $accessToken")
-        setRequestProperty("Content-Type", "multipart/related; boundary=$boundary")
-    }
-
-    connection.outputStream.use { it.write(body) }
-    val code = connection.responseCode
-    if (code !in 200..299) {
-        val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
-        throw IllegalStateException(errorText)
-    }
-}
 private fun buildWorkoutShareText(workout: WorkoutRecord, unitSystem: UnitSystem): String {
     val startedAt = Instant.ofEpochMilli(workout.startedAt).atZone(ZoneId.systemDefault())
     return buildString {
