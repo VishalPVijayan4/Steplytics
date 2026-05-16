@@ -24,8 +24,7 @@ playServicesAuth = "21.2.0"
 playServicesLocation = "21.2.0"
 playServicesMaps = "18.2.0"
 desugarJdkLibs = "2.1.5"
-firebaseBom = "33.12.0"
-firebaseAuth = "23.2.1"
+firebaseBom = "32.8.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -72,7 +71,7 @@ google-play-services-location = { group = "com.google.android.gms", name = "play
 google-play-services-maps = { group = "com.google.android.gms", name = "play-services-maps", version.ref = "playServicesMaps" }
 desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
-firebase-auth-ktx = { group = "com.google.firebase", name = "firebase-auth-ktx", version.ref = "firebaseAuth" }
+firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-firestore-ktx = { group = "com.google.firebase", name = "firebase-firestore-ktx" }
 
 [plugins]
