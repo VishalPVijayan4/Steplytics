@@ -49,6 +49,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Download
@@ -874,7 +875,7 @@ private fun TrackingScreen(
     onPauseResume: () -> Unit,
     onStop: () -> Unit
 ) {
-    var showAqi by remember { mutableStateOf(true) }
+    var isSessionCardExpanded by remember { mutableStateOf(true) }
     var showInactivityPrompt by remember { mutableStateOf(false) }
     var inactivityAlertShown by remember { mutableStateOf(false) }
 
@@ -911,7 +912,7 @@ private fun TrackingScreen(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    if (showAqi) MiniStatusChip(title = "AQI", value = currentAqi?.toString() ?: "--")
+                    MiniStatusChip(title = "AQI", value = currentAqi?.toString() ?: "--")
                     MiniStatusChip(title = "Moving", value = formatElapsedTime(movingTimeSeconds))
                     MiniStatusChip(title = "Speed", value = String.format(Locale.US, "%.1f km/h", currentSpeedMps * 3.6f))
                 }
@@ -923,7 +924,7 @@ private fun TrackingScreen(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
@@ -931,9 +932,13 @@ private fun TrackingScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(text = activity.title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(text = if (isPaused) "Paused • Tap resume when you're ready" else "Live tracking is locked in", color = TextSecondary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "🏃", color = PrimaryGreen)
+                    Text(text = "RUN TRACKER", color = PrimaryGreen, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Outlined.Settings, contentDescription = null, tint = TextSecondary)
+                    Icon(imageVector = Icons.Outlined.AccountCircle, contentDescription = null, tint = TextSecondary)
                 }
                 Text(text = formatElapsedTime(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleLarge)
             }
@@ -941,6 +946,11 @@ private fun TrackingScreen(
                 MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
                 MetricOverlayCard(modifier = Modifier.weight(1f), value = formatPace(pacePerKm, unitSystem), label = "Pace")
                 MetricOverlayCard(modifier = Modifier.weight(1f), value = caloriesKcal.toInt().toString(), label = "Calories")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatPace(pacePerKm, unitSystem), label = "Pace")
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatElapsedTime(elapsedSeconds), label = "Duration")
             }
         }
 
@@ -951,33 +961,22 @@ private fun TrackingScreen(
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                ToggleChip(label = if (showAqi) "Hide AQI" else "Show AQI", selected = showAqi) { showAqi = !showAqi }
-            }
-            AnimatedVisibility(visible = showAqi) {
-                SurfaceCard {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (showAqi) Text(text = "AQI: ${currentAqi?.toString() ?: "--"}", color = Color.White)
-                        Text(text = "Moving time ${formatElapsedTime(movingTimeSeconds)} • Idle ${formatElapsedTime(stationaryTimeSeconds)}", color = TextSecondary)
+            SurfaceCard {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(text = "SESSION ACTIVITY", color = TextSecondary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            Text(text = "Moving ${formatElapsedTime(movingTimeSeconds)} • Idle ${formatElapsedTime(stationaryTimeSeconds)}", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        }
+                        ToggleChip(label = if (isSessionCardExpanded) "▾" else "▸", selected = isSessionCardExpanded) { isSessionCardExpanded = !isSessionCardExpanded }
                     }
-                }
-            }
-            AnimatedVisibility(visible = showInactivityPrompt) {
-                SurfaceCard {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Movement paused",
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "You have been stationary for 10 seconds. The route marker and pace are locked until movement resumes.",
-                            color = TextSecondary,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        TextButton(onClick = { showInactivityPrompt = false }) {
-                            Text("Dismiss")
+                    AnimatedVisibility(visible = isSessionCardExpanded && showInactivityPrompt) {
+                        SurfaceCard {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(text = "Movement paused", color = PrimaryGreen, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text(text = "You have been stationary for 10 seconds. The route marker and pace are locked until movement resumes.", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+                                TextButton(onClick = { showInactivityPrompt = false }) { Text("DISMISS", color = PrimaryGreen) }
+                            }
                         }
                     }
                 }
