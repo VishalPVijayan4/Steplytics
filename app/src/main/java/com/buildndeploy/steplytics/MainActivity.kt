@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.google.android.gms.common.api.Scope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.buildndeploy.steplytics.data.local.SteplyticsPreferencesDataSource
@@ -127,6 +128,7 @@ private fun SteplyticsApp(
             )
                 .requestIdToken(context.getString(R.string.default_web_client_id))
                 .requestEmail()
+                .requestScopes(Scope("https://www.googleapis.com/auth/drive.appdata"))
                 .build()
             val client = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(context, options)
             client.revokeAccess().addOnCompleteListener {

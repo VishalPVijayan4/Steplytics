@@ -127,10 +127,14 @@ import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
+import com.google.android.gms.auth.GoogleAuthUtil
+import com.google.android.gms.auth.api.signin.GoogleSignIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -936,6 +940,12 @@ private fun TrackingScreen(
                     Icon(imageVector = Icons.Outlined.Settings, contentDescription = null, tint = TextSecondary)
                     Icon(imageVector = Icons.Outlined.AccountCircle, contentDescription = null, tint = TextSecondary)
                 }
+                Text(text = formatElapsedTime(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatPace(pacePerKm, unitSystem), label = "Pace")
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = caloriesKcal.toInt().toString(), label = "Calories")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
