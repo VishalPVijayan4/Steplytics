@@ -891,27 +891,12 @@ private fun TrackingScreen(
     }
 
     ScreenEntrance {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF1B2238))))
-            .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(text = activity.title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(text = if (isPaused) "Paused • Tap resume when you're ready" else "Live tracking is locked in", color = TextSecondary)
-            }
-            Text(text = formatElapsedTime(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleLarge)
-        }
-
         WorkoutMapCard(
             title = "Live Route",
             subtitle = currentLocation?.let { "Marker: ${String.format(Locale.US, "%.5f", it.latitude)}, ${String.format(Locale.US, "%.5f", it.longitude)}" } ?: "Waiting for your first location fix...",
@@ -930,64 +915,89 @@ private fun TrackingScreen(
                     MiniStatusChip(title = "Moving", value = formatElapsedTime(movingTimeSeconds))
                     MiniStatusChip(title = "Speed", value = String.format(Locale.US, "%.1f km/h", currentSpeedMps * 3.6f))
                 }
-            }
+            },
+            modifier = Modifier.fillMaxSize()
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
-            MetricOverlayCard(modifier = Modifier.weight(1f), value = formatPace(pacePerKm, unitSystem), label = "Pace")
-            MetricOverlayCard(modifier = Modifier.weight(1f), value = caloriesKcal.toInt().toString(), label = "Calories")
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            ToggleChip(label = if (showAqi) "Hide AQI" else "Show AQI", selected = showAqi) { showAqi = !showAqi }
-        }
-
-        AnimatedVisibility(visible = showAqi) {
-            SurfaceCard {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (showAqi) Text(text = "AQI: ${currentAqi?.toString() ?: "--"}", color = Color.White)
-                    Text(text = "Moving time ${formatElapsedTime(movingTimeSeconds)} • Idle ${formatElapsedTime(stationaryTimeSeconds)}", color = TextSecondary)
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(text = activity.title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(text = if (isPaused) "Paused • Tap resume when you're ready" else "Live tracking is locked in", color = TextSecondary)
                 }
+                Text(text = formatElapsedTime(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatPace(pacePerKm, unitSystem), label = "Pace")
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = caloriesKcal.toInt().toString(), label = "Calories")
             }
         }
 
-        AnimatedVisibility(visible = showInactivityPrompt) {
-            SurfaceCard {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Movement paused",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "You have been stationary for 10 seconds. The route marker and pace are locked until movement resumes.",
-                        color = TextSecondary,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    TextButton(onClick = { showInactivityPrompt = false }) {
-                        Text("Dismiss")
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                ToggleChip(label = if (showAqi) "Hide AQI" else "Show AQI", selected = showAqi) { showAqi = !showAqi }
+            }
+            AnimatedVisibility(visible = showAqi) {
+                SurfaceCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (showAqi) Text(text = "AQI: ${currentAqi?.toString() ?: "--"}", color = Color.White)
+                        Text(text = "Moving time ${formatElapsedTime(movingTimeSeconds)} • Idle ${formatElapsedTime(stationaryTimeSeconds)}", color = TextSecondary)
                     }
                 }
             }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            SecondaryActionButton(
-                label = if (isPaused) "Resume" else "Pause",
-                background = Color(0xFF111A31),
-                contentColor = if (isPaused) PrimaryGreen else Color.White,
-                modifier = Modifier.weight(1f),
-                onClick = onPauseResume
-            )
-            SecondaryActionButton(
-                label = "Stop",
-                background = Color(0xFFFF1B2D),
-                contentColor = Color.White,
-                modifier = Modifier.weight(1f),
-                onClick = onStop
-            )
+            AnimatedVisibility(visible = showInactivityPrompt) {
+                SurfaceCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Movement paused",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "You have been stationary for 10 seconds. The route marker and pace are locked until movement resumes.",
+                            color = TextSecondary,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        TextButton(onClick = { showInactivityPrompt = false }) {
+                            Text("Dismiss")
+                        }
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                SecondaryActionButton(
+                    label = if (isPaused) "Resume" else "Pause",
+                    background = Color(0xCC111A31),
+                    contentColor = if (isPaused) PrimaryGreen else Color.White,
+                    modifier = Modifier.weight(1f),
+                    onClick = onPauseResume
+                )
+                SecondaryActionButton(
+                    label = "Stop",
+                    background = Color(0xCCFF1B2D),
+                    contentColor = Color.White,
+                    modifier = Modifier.weight(1f),
+                    onClick = onStop
+                )
+            }
         }
     }
     }
@@ -1491,7 +1501,8 @@ private fun WorkoutMapCard(
     followLatestPoint: Boolean,
     currentLocation: LatLng? = routePoints.lastOrNull(),
     markerInfo: String? = null,
-    topOverlay: (@Composable () -> Unit)? = null
+    topOverlay: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val mapView = rememberMapViewWithLifecycle()
@@ -1499,7 +1510,7 @@ private fun WorkoutMapCard(
 
     SurfaceCard {
         Box(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .height(400.dp)
                 .clip(RoundedCornerShape(20.dp))
