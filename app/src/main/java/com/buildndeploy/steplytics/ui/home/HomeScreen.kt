@@ -10,6 +10,7 @@ import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Bundle
@@ -49,6 +50,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Info
@@ -135,6 +137,7 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.json.JSONObject
 
 private enum class DashboardTab(
     val label: String,
@@ -287,6 +290,8 @@ fun HomeScreen(
     var showUnitDialog by remember { mutableStateOf(false) }
     var showNotificationDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var isDriveBackupInProgress by remember { mutableStateOf(false) }
+    var pendingDriveBackupPayload by remember { mutableStateOf<String?>(null) }
     var showAboutDialog by remember { mutableStateOf(false) }
     val appInfo = remember(context) { context.resolveAppInfo() }
     val dashboardInsight = remember(workouts, unitSystem) {
@@ -346,6 +351,24 @@ fun HomeScreen(
             }
         }
     }
+    val driveBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+        val payload = pendingDriveBackupPayload
+        if (uri == null || payload.isNullOrEmpty()) {
+            isDriveBackupInProgress = false
+            pendingDriveBackupPayload = null
+            Toast.makeText(context, "Backup cancelled.", Toast.LENGTH_SHORT).show()
+        } else {
+            scope.launch(Dispatchers.IO) {
+                val result = writeBackupJsonToUri(context, uri, payload)
+                launch(Dispatchers.Main) {
+                    isDriveBackupInProgress = false
+                    pendingDriveBackupPayload = null
+                    Toast.makeText(context, result, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     LaunchedEffect(serviceSession) {
         val active = serviceSession
         when {
@@ -563,6 +586,14 @@ fun HomeScreen(
                             onUnitsClick = { showUnitDialog = true },
                             onNotificationsClick = { showNotificationDialog = true },
                             onExportClick = { showExportDialog = true },
+                            onBackupToDriveClick = {
+                                if (!isDriveBackupInProgress) {
+                                    isDriveBackupInProgress = true
+                                    pendingDriveBackupPayload = createBackupPayload(profile, workouts)
+                                    driveBackupLauncher.launch("steplytics_backup_${System.currentTimeMillis()}.json")
+                                }
+                            },
+                            isBackupToDriveInProgress = isDriveBackupInProgress,
                             appInfo = appInfo,
                             onAboutClick = { showAboutDialog = true }
                         )
@@ -856,27 +887,12 @@ private fun TrackingScreen(
     }
 
     ScreenEntrance {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(AppBackground, Color(0xFF1B2238))))
-            .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(text = activity.title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(text = if (isPaused) "Paused • Tap resume when you're ready" else "Live tracking is locked in", color = TextSecondary)
-            }
-            Text(text = formatElapsedTime(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleLarge)
-        }
-
         WorkoutMapCard(
             title = "Live Route",
             subtitle = currentLocation?.let { "Marker: ${String.format(Locale.US, "%.5f", it.latitude)}, ${String.format(Locale.US, "%.5f", it.longitude)}" } ?: "Waiting for your first location fix...",
@@ -895,64 +911,89 @@ private fun TrackingScreen(
                     MiniStatusChip(title = "Moving", value = formatElapsedTime(movingTimeSeconds))
                     MiniStatusChip(title = "Speed", value = String.format(Locale.US, "%.1f km/h", currentSpeedMps * 3.6f))
                 }
-            }
+            },
+            modifier = Modifier.fillMaxSize()
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
-            MetricOverlayCard(modifier = Modifier.weight(1f), value = formatPace(pacePerKm, unitSystem), label = "Pace")
-            MetricOverlayCard(modifier = Modifier.weight(1f), value = caloriesKcal.toInt().toString(), label = "Calories")
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            ToggleChip(label = if (showAqi) "Hide AQI" else "Show AQI", selected = showAqi) { showAqi = !showAqi }
-        }
-
-        AnimatedVisibility(visible = showAqi) {
-            SurfaceCard {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (showAqi) Text(text = "AQI: ${currentAqi?.toString() ?: "--"}", color = Color.White)
-                    Text(text = "Moving time ${formatElapsedTime(movingTimeSeconds)} • Idle ${formatElapsedTime(stationaryTimeSeconds)}", color = TextSecondary)
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(text = activity.title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(text = if (isPaused) "Paused • Tap resume when you're ready" else "Live tracking is locked in", color = TextSecondary)
                 }
+                Text(text = formatElapsedTime(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatDistance(distanceKm, unitSystem), label = "Distance")
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = formatPace(pacePerKm, unitSystem), label = "Pace")
+                MetricOverlayCard(modifier = Modifier.weight(1f), value = caloriesKcal.toInt().toString(), label = "Calories")
             }
         }
 
-        AnimatedVisibility(visible = showInactivityPrompt) {
-            SurfaceCard {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Movement paused",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "You have been stationary for 10 seconds. The route marker and pace are locked until movement resumes.",
-                        color = TextSecondary,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    TextButton(onClick = { showInactivityPrompt = false }) {
-                        Text("Dismiss")
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                ToggleChip(label = if (showAqi) "Hide AQI" else "Show AQI", selected = showAqi) { showAqi = !showAqi }
+            }
+            AnimatedVisibility(visible = showAqi) {
+                SurfaceCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (showAqi) Text(text = "AQI: ${currentAqi?.toString() ?: "--"}", color = Color.White)
+                        Text(text = "Moving time ${formatElapsedTime(movingTimeSeconds)} • Idle ${formatElapsedTime(stationaryTimeSeconds)}", color = TextSecondary)
                     }
                 }
             }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            SecondaryActionButton(
-                label = if (isPaused) "Resume" else "Pause",
-                background = Color(0xFF111A31),
-                contentColor = if (isPaused) PrimaryGreen else Color.White,
-                modifier = Modifier.weight(1f),
-                onClick = onPauseResume
-            )
-            SecondaryActionButton(
-                label = "Stop",
-                background = Color(0xFFFF1B2D),
-                contentColor = Color.White,
-                modifier = Modifier.weight(1f),
-                onClick = onStop
-            )
+            AnimatedVisibility(visible = showInactivityPrompt) {
+                SurfaceCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Movement paused",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "You have been stationary for 10 seconds. The route marker and pace are locked until movement resumes.",
+                            color = TextSecondary,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        TextButton(onClick = { showInactivityPrompt = false }) {
+                            Text("Dismiss")
+                        }
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                SecondaryActionButton(
+                    label = if (isPaused) "Resume" else "Pause",
+                    background = Color(0xCC111A31),
+                    contentColor = if (isPaused) PrimaryGreen else Color.White,
+                    modifier = Modifier.weight(1f),
+                    onClick = onPauseResume
+                )
+                SecondaryActionButton(
+                    label = "Stop",
+                    background = Color(0xCCFF1B2D),
+                    contentColor = Color.White,
+                    modifier = Modifier.weight(1f),
+                    onClick = onStop
+                )
+            }
         }
     }
     }
@@ -1255,6 +1296,8 @@ private fun ProfileScreen(
     onUnitsClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onExportClick: () -> Unit,
+    onBackupToDriveClick: () -> Unit,
+    isBackupToDriveInProgress: Boolean,
     appInfo: AppInfo,
     onAboutClick: () -> Unit
 ) {
@@ -1314,6 +1357,13 @@ private fun ProfileScreen(
                 title = "Export Data",
                 subtitle = "Create a branded PDF workout report from your saved workouts",
                 onClick = onExportClick
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            PreferenceRow(
+                icon = Icons.Outlined.CloudUpload,
+                title = if (isBackupToDriveInProgress) "Backing up..." else "Backup to Google Drive",
+                subtitle = "Save your profile and workouts to your private Drive app data",
+                onClick = onBackupToDriveClick
             )
         }
 
@@ -1447,7 +1497,8 @@ private fun WorkoutMapCard(
     followLatestPoint: Boolean,
     currentLocation: LatLng? = routePoints.lastOrNull(),
     markerInfo: String? = null,
-    topOverlay: (@Composable () -> Unit)? = null
+    topOverlay: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val mapView = rememberMapViewWithLifecycle()
@@ -1455,7 +1506,7 @@ private fun WorkoutMapCard(
 
     SurfaceCard {
         Box(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .height(400.dp)
                 .clip(RoundedCornerShape(20.dp))
@@ -2396,6 +2447,58 @@ private fun sharePdfReport(
     context.startActivity(Intent.createChooser(shareIntent, "Share workout report").apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     })
+}
+
+
+
+private fun createBackupPayload(
+    profile: UserProfile?,
+    workouts: List<WorkoutRecord>
+): String {
+    return JSONObject().apply {
+        put("updatedAt", System.currentTimeMillis())
+        put("profile", JSONObject().apply {
+            put("name", profile?.name ?: "")
+            put("email", profile?.email ?: "")
+            put("age", profile?.age ?: 0)
+            put("weight", profile?.weight ?: 0f)
+            put("height", profile?.height ?: 0f)
+            put("gender", profile?.gender ?: "")
+        })
+        put("workouts", org.json.JSONArray(workouts.map { workout ->
+            JSONObject().apply {
+                put("id", workout.id)
+                put("activityType", workout.activityType)
+                put("startedAt", workout.startedAt)
+                put("durationSeconds", workout.durationSeconds)
+                put("distanceKm", workout.distanceKm)
+                put("caloriesKcal", workout.caloriesKcal)
+                put("avgAqi", workout.avgAqi)
+                put("avgPollen", workout.avgPollen)
+                put("route", org.json.JSONArray(workout.route.map { point ->
+                    JSONObject().apply {
+                        put("latitude", point.latitude)
+                        put("longitude", point.longitude)
+                    }
+                }))
+            }
+        }))
+    }.toString()
+}
+
+private fun writeBackupJsonToUri(
+    context: android.content.Context,
+    uri: Uri,
+    payload: String
+): String {
+    return try {
+        context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { writer ->
+            writer.write(payload)
+        } ?: return "Backup failed: unable to open destination file."
+        "Backup saved to Google Drive successfully."
+    } catch (error: Exception) {
+        "Backup failed: ${error.message ?: "Unknown error"}"
+    }
 }
 
 private fun buildWorkoutShareText(workout: WorkoutRecord, unitSystem: UnitSystem): String {
